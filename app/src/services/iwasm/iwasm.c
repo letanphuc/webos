@@ -5,6 +5,7 @@
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/multi_heap/shared_multi_heap.h>
 #include <zephyr/shell/shell.h>
 
 #include "wasm_export.h"
@@ -23,14 +24,15 @@ struct mem_header {
 static void *iwasm_malloc(unsigned int size)
 {
 	size_t header_sz = sizeof(struct mem_header);
-	size_t total = header_sz + 7 + size;
-	uint8_t *raw = k_malloc(total);
+	size_t total = header_sz + size;
+	uint8_t *raw = shared_multi_heap_aligned_alloc(SMH_REG_ATTR_EXTERNAL, 8,
+							total);
 
 	if (!raw) {
 		return NULL;
 	}
 
-	uintptr_t user = ((uintptr_t)(raw + header_sz) + 7) & ~7u;
+	uintptr_t user = (uintptr_t)(raw + header_sz);
 	struct mem_header *hdr = (struct mem_header *)(user - header_sz);
 
 	hdr->raw = raw;
@@ -47,7 +49,7 @@ static void iwasm_free(void *ptr)
 	struct mem_header *hdr = (struct mem_header *)(user -
 							sizeof(struct mem_header));
 
-	k_free(hdr->raw);
+	shared_multi_heap_free(hdr->raw);
 }
 
 static void *iwasm_realloc(void *ptr, unsigned int size)
@@ -159,7 +161,7 @@ static int iwasm_exec_file(const char *path)
 		goto cleanup_buf;
 	}
 
-	module_inst = wasm_runtime_instantiate(module, 32768, 32768, error_buf,
+	module_inst = wasm_runtime_instantiate(module, 65536, 65536, error_buf,
 					       sizeof(error_buf));
 	if (!module_inst) {
 		LOG_ERR("Instantiate failed: %s", error_buf);
