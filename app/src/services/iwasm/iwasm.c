@@ -159,7 +159,7 @@ static int iwasm_exec_file(const char *path)
 		goto cleanup_buf;
 	}
 
-	module_inst = wasm_runtime_instantiate(module, 8192, 8192, error_buf,
+	module_inst = wasm_runtime_instantiate(module, 32768, 32768, error_buf,
 					       sizeof(error_buf));
 	if (!module_inst) {
 		LOG_ERR("Instantiate failed: %s", error_buf);
