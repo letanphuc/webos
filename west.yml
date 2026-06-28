@@ -8,8 +8,14 @@ manifest:
   remotes:
     - name: zephyrproject-rtos
       url-base: https://github.com/zephyrproject-rtos
+    - name: letanphuc
+      url-base: https://github.com/letanphuc
 
   projects:
+    - name: wasm-micro-runtime
+      remote: letanphuc
+      revision: main
+      path: modules/wasmmicroruntime
     - name: zephyr
       remote: zephyrproject-rtos
       revision: main

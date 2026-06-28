@@ -53,11 +53,18 @@ app/src/
 - **`hal/`** — hardware abstraction layer. Currently `wifi/` owns the Wi-Fi connection sequence.
 - **`utils/`** — shared utilities. Currently `json/` provides `json_get_string()` and `append_json_string()`.
 - **`services/`** — higher-level services. Each service is a self-contained directory.
-  - `fs/` — FatFS operations: `init_filesystem_layout()`, `write_file()`, `ensure_dir()`, `webos_path_allowed()`.
+  - `fs/` — FatFS on flash disk (192 KB `storage_partition` at 0x3b0000, persistent).
+    Mount point `/STORAGE:`, managed by fstab `automount`.
+    `init_filesystem_layout()` waits for the mount via `fs_stat` retry, then creates
+    `/apps/`, `/config/`, `/logs/`, `/ota/`, `/www/`.
+    `write_file()` ensures the parent directory before opening, pre-checks existence
+    with `fs_stat` to avoid triggering Zephyr's `LOG_ERR` false positives.
+    Long filename support enabled (`CONFIG_FS_FATFS_LFN_MODE_STACK`).
   - `ota/` — clean API (`ota_init/begin/write/finish/abort`) with internal per-call locking; the HTTP handler never touches the flash context or mutex directly.
   - `http/` — `http.c` owns the server definition and JSON/text response helpers; `http_handlers.c` owns all five endpoint handlers (`GET /`, `GET /health`, `POST /push`, `POST /shell`, `POST /ota`) and registers them via iterable linker sections.
 - `app/CMakeLists.txt` lists every `.c` file and adds `target_include_directories(app PRIVATE src)` so that `#include "hal/wifi/wifi.h"`-style paths work from any source file.
 - `app/sections-rom.ld` provides the iterable ROM section that binds `HTTP_RESOURCE_DEFINE` entries from `http_handlers.c` to the `HTTP_SERVICE_DEFINE` in `http.c`.
+- `app/app.overlay` defines the fstab entry (`zephyr,fstab,fatfs`, automount, disk-access) and the flash disk (`zephyr,flash-disk`) backed by `&storage_partition`.
 
 ## CI And Docs
 
