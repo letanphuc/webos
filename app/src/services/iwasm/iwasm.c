@@ -16,18 +16,26 @@ LOG_MODULE_REGISTER(iwasm, LOG_LEVEL_INF);
 static bool runtime_ready;
 
 struct mem_header {
+	void *raw;
 	size_t size;
 };
 
 static void *iwasm_malloc(unsigned int size)
 {
-	struct mem_header *hdr = k_malloc(sizeof(struct mem_header) + size);
+	size_t header_sz = sizeof(struct mem_header);
+	size_t total = header_sz + 7 + size;
+	uint8_t *raw = k_malloc(total);
 
-	if (!hdr) {
+	if (!raw) {
 		return NULL;
 	}
+
+	uintptr_t user = ((uintptr_t)(raw + header_sz) + 7) & ~7u;
+	struct mem_header *hdr = (struct mem_header *)(user - header_sz);
+
+	hdr->raw = raw;
 	hdr->size = size;
-	return (char *)hdr + sizeof(struct mem_header);
+	return (void *)user;
 }
 
 static void iwasm_free(void *ptr)
@@ -35,11 +43,16 @@ static void iwasm_free(void *ptr)
 	if (!ptr) {
 		return;
 	}
-	k_free((char *)ptr - sizeof(struct mem_header));
+	uintptr_t user = (uintptr_t)ptr;
+	struct mem_header *hdr = (struct mem_header *)(user -
+							sizeof(struct mem_header));
+
+	k_free(hdr->raw);
 }
 
 static void *iwasm_realloc(void *ptr, unsigned int size)
 {
+	uintptr_t user;
 	struct mem_header *hdr;
 	size_t old_size;
 	void *new_ptr;
@@ -52,12 +65,14 @@ static void *iwasm_realloc(void *ptr, unsigned int size)
 		return NULL;
 	}
 
-	hdr = (struct mem_header *)((char *)ptr - sizeof(struct mem_header));
+	user = (uintptr_t)ptr;
+	hdr = (struct mem_header *)(user - sizeof(struct mem_header));
 	old_size = hdr->size;
+
 	new_ptr = iwasm_malloc(size);
 	if (new_ptr) {
-		memcpy(new_ptr, ptr, old_size < (size_t)size ? old_size
-							   : (size_t)size);
+		memcpy(new_ptr, ptr,
+		       old_size < (size_t)size ? old_size : (size_t)size);
 		iwasm_free(ptr);
 	}
 	return new_ptr;
