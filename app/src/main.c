@@ -33,6 +33,7 @@ static uint16_t webos_http_port = WEBOS_HTTP_PORT;
 static K_MUTEX_DEFINE(shell_lock);
 static K_SEM_DEFINE(wifi_connected, 0, 1);
 static K_SEM_DEFINE(ipv4_ready, 0, 1);
+static bool wifi_connect_ok;
 static K_MUTEX_DEFINE(ota_lock);
 static struct flash_img_context ota_flash_ctx;
 static bool ota_active;
@@ -74,10 +75,12 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint64_t mgmt
 
 		if (status != NULL && status->status != 0) {
 			LOG_ERR("Wi-Fi connect failed: %d", status->status);
+			k_sem_give(&wifi_connected);
 			return;
 		}
 
 		LOG_INF("Wi-Fi connected to %s", CONFIG_WEBOS_WIFI_SSID);
+		wifi_connect_ok = true;
 		k_sem_give(&wifi_connected);
 	} else if (mgmt_event == NET_EVENT_WIFI_DISCONNECT_RESULT) {
 		LOG_WRN("Wi-Fi disconnected from %s", CONFIG_WEBOS_WIFI_SSID);
@@ -143,6 +146,7 @@ static int connect_wifi(void)
 	for (int attempt = 1; attempt <= WIFI_RETRY_MAX; attempt++) {
 		while (k_sem_take(&wifi_connected, K_NO_WAIT) == 0) {
 		}
+		wifi_connect_ok = false;
 
 		LOG_INF("Connecting to Wi-Fi SSID: %s (attempt %d/%d)", CONFIG_WEBOS_WIFI_SSID,
 			attempt, WIFI_RETRY_MAX);
@@ -157,11 +161,15 @@ static int connect_wifi(void)
 		}
 
 		ret = k_sem_take(&wifi_connected, K_SECONDS(30));
-		if (ret == 0) {
+		if (ret == 0 && wifi_connect_ok) {
 			break;
 		}
-
-		LOG_WRN("Wi-Fi connect timed out (attempt %d/%d)", attempt, WIFI_RETRY_MAX);
+		if (ret == 0) {
+			ret = -ECONNREFUSED;
+			LOG_WRN("Wi-Fi connect attempt %d/%d: failed", attempt, WIFI_RETRY_MAX);
+		} else {
+			LOG_WRN("Wi-Fi connect attempt %d/%d: timed out", attempt, WIFI_RETRY_MAX);
+		}
 		if (attempt < WIFI_RETRY_MAX) {
 			k_sleep(K_MSEC(WIFI_RETRY_DELAY_MS));
 		}
