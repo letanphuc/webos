@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-#define WEBOS_MOUNT_POINT "/RAM:"
+#define WEBOS_MOUNT_POINT "/STORAGE:"
 
 bool webos_path_allowed(const char *path);
 int ensure_dir(const char *path);

@@ -2,18 +2,18 @@
 	fstab {
 		compatible = "zephyr,fstab";
 
-		webos_fatfs: webos_fatfs {
+		storage_fatfs: storage_fatfs {
 			compatible = "zephyr,fstab,fatfs";
 			automount;
 			disk-access;
-			mount-point = "/RAM:";
+			mount-point = "/STORAGE:";
 		};
 	};
 
-	ramdisk0 {
-		compatible = "zephyr,ram-disk";
-		disk-name = "RAM";
-		sector-size = <512>;
-		sector-count = <256>;
+	flash_disk0 {
+		compatible = "zephyr,flash-disk";
+		partition = <&storage_partition>;
+		disk-name = "STORAGE";
+		cache-size = <4096>;
 	};
 };

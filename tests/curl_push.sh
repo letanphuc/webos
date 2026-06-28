@@ -2,7 +2,7 @@
 set -eu
 
 host="${1:-192.168.50.17}"
-path="${2:-/RAM:/apps/curl-test.txt}"
+path="${2:-/STORAGE:/apps/curltest.txt}"
 file="${3:-hello from curl}"
 
 curl --fail --show-error --max-time 8 -i \

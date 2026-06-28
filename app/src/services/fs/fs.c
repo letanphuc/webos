@@ -1,22 +1,13 @@
 #include <errno.h>
 #include <string.h>
 
-#include <ff.h>
 #include <zephyr/fs/fs.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
 #include "services/fs/fs.h"
 
 LOG_MODULE_REGISTER(webos_fs, LOG_LEVEL_INF);
-
-static FATFS webos_fatfs;
-static struct fs_mount_t webos_mount = {
-	.type = FS_FATFS,
-	.mnt_point = WEBOS_MOUNT_POINT,
-	.fs_data = &webos_fatfs,
-	.storage_dev = (void *)"RAM",
-	.flags = FS_MOUNT_FLAG_USE_DISK_ACCESS,
-};
 
 bool webos_path_allowed(const char *path)
 {
@@ -26,9 +17,21 @@ bool webos_path_allowed(const char *path)
 
 int ensure_dir(const char *path)
 {
-	int ret = fs_mkdir(path);
+	struct fs_dirent entry;
+	int ret;
 
-	return ret == -EEXIST ? 0 : ret;
+	ret = fs_stat(path, &entry);
+	if (ret == 0) {
+		return 0;
+	}
+
+	ret = fs_mkdir(path);
+	if (ret != 0) {
+		LOG_ERR("ensure_dir %s failed: %d", path, ret);
+	} else {
+		LOG_INF("ensure_dir %s: created", path);
+	}
+	return ret;
 }
 
 int write_file(const char *path, const char *data)
@@ -37,12 +40,29 @@ int write_file(const char *path, const char *data)
 	int ret;
 
 	if (!webos_path_allowed(path)) {
+		LOG_ERR("write_file: path not allowed: %s", path);
 		return -EINVAL;
+	}
+
+	{
+		char parent[128];
+		const char *last_slash = strrchr(path, '/');
+
+		if (last_slash != NULL && last_slash != path) {
+			size_t parent_len = last_slash - path;
+
+			if (parent_len < sizeof(parent)) {
+				memcpy(parent, path, parent_len);
+				parent[parent_len] = '\0';
+				ensure_dir(parent);
+			}
+		}
 	}
 
 	fs_file_t_init(&file);
 	ret = fs_open(&file, path, FS_O_CREATE | FS_O_TRUNC | FS_O_WRITE);
 	if (ret != 0) {
+		LOG_ERR("write_file: fs_open(%s) failed: %d", path, ret);
 		return ret;
 	}
 
@@ -57,13 +77,27 @@ int write_file(const char *path, const char *data)
 
 void init_filesystem_layout(void)
 {
+	struct fs_dirent dirent;
 	int ret;
+	int attempt;
 
-	ret = fs_mount(&webos_mount);
-	if (ret != 0 && ret != -EALREADY) {
-		LOG_ERR("Filesystem mount failed: %d", ret);
+	LOG_INF("Initializing filesystem layout under %s", WEBOS_MOUNT_POINT);
+
+	for (attempt = 0; attempt < 20; attempt++) {
+		ret = fs_stat(WEBOS_MOUNT_POINT, &dirent);
+		if (ret == 0) {
+			break;
+		}
+		LOG_DBG("Waiting for %s to be ready (attempt %d, ret=%d)",
+			WEBOS_MOUNT_POINT, attempt + 1, ret);
+		k_sleep(K_MSEC(500));
+	}
+	if (ret != 0) {
+		LOG_ERR("Filesystem %s not ready after %d attempts: %d",
+			WEBOS_MOUNT_POINT, attempt, ret);
 		return;
 	}
+	LOG_INF("Filesystem %s is ready", WEBOS_MOUNT_POINT);
 
 	ret = ensure_dir(WEBOS_MOUNT_POINT "/apps");
 	if (ret != 0) {
