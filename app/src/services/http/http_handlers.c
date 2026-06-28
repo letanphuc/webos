@@ -20,6 +20,8 @@ LOG_MODULE_REGISTER(webos_http_handlers, LOG_LEVEL_INF);
 
 static K_MUTEX_DEFINE(shell_lock);
 
+HTTP_SERVER_REGISTER_HEADER_CAPTURE(webos_path, "X-Webos-Path");
+
 static int root_handler(struct http_client_ctx *client, enum http_transaction_status status,
 			const struct http_request_ctx *request_ctx,
 			struct http_response_ctx *response_ctx, void *user_data)
@@ -104,6 +106,114 @@ static int push_handler(struct http_client_ctx *client, enum http_transaction_st
 	} else {
 		ret = snprintk(response, sizeof(response), "{\"error\":%d}\n", ret);
 		set_json_response(response_ctx, HTTP_400_BAD_REQUEST, response, ret);
+	}
+
+	return 0;
+}
+
+static int pushbin_handler(struct http_client_ctx *client,
+			   enum http_transaction_status status,
+			   const struct http_request_ctx *request_ctx,
+			   struct http_response_ctx *response_ctx, void *user_data)
+{
+	ARG_UNUSED(client);
+	ARG_UNUSED(user_data);
+	static char path[128];
+	static struct fs_file_t file;
+	static bool file_open;
+	static char response[96];
+	int ret;
+
+	if (status == HTTP_SERVER_TRANSACTION_ABORTED) {
+		if (file_open) {
+			fs_close(&file);
+			file_open = false;
+		}
+		return 0;
+	}
+
+	if (status == HTTP_SERVER_TRANSACTION_COMPLETE) {
+		return 0;
+	}
+
+	if (!file_open && request_ctx->headers && request_ctx->header_count > 0) {
+		for (size_t i = 0; i < request_ctx->header_count; i++) {
+			if (request_ctx->headers[i].name == NULL) {
+				continue;
+			}
+			if (strcmp(request_ctx->headers[i].name, "X-Webos-Path") == 0 &&
+			    request_ctx->headers[i].value != NULL) {
+				strncpy(path, request_ctx->headers[i].value,
+					sizeof(path) - 1);
+				path[sizeof(path) - 1] = '\0';
+
+				if (!webos_path_allowed(path)) {
+					ret = snprintk(response, sizeof(response),
+						       "{\"error\":\"path not allowed\"}\n");
+					set_json_response(response_ctx,
+							  HTTP_400_BAD_REQUEST, response,
+							  ret);
+					return 0;
+				}
+
+				{
+					char parent[128];
+					const char *slash = strrchr(path, '/');
+
+					if (slash != NULL && slash != path) {
+						size_t plen = slash - path;
+
+						if (plen < sizeof(parent)) {
+							memcpy(parent, path, plen);
+							parent[plen] = '\0';
+							ensure_dir(parent);
+						}
+					}
+				}
+
+				fs_file_t_init(&file);
+				ret = fs_open(&file, path,
+					      FS_O_CREATE | FS_O_TRUNC | FS_O_WRITE);
+				if (ret != 0) {
+					ret = snprintk(response, sizeof(response),
+						       "{\"error\":%d}\n", ret);
+					set_json_response(response_ctx,
+							  HTTP_500_INTERNAL_SERVER_ERROR,
+							  response, ret);
+					return 0;
+				}
+				file_open = true;
+				break;
+			}
+		}
+	}
+
+	if (!file_open) {
+		ret = snprintk(response, sizeof(response),
+			       "{\"error\":\"missing X-Webos-Path header\"}\n");
+		set_json_response(response_ctx, HTTP_400_BAD_REQUEST, response, ret);
+		return 0;
+	}
+
+	if (request_ctx->data_len > 0) {
+		ret = fs_write(&file, request_ctx->data, request_ctx->data_len);
+		if (ret < 0) {
+			fs_close(&file);
+			file_open = false;
+			ret = snprintk(response, sizeof(response),
+				       "{\"error\":%d}\n", ret);
+			set_json_response(response_ctx,
+					  HTTP_500_INTERNAL_SERVER_ERROR, response, ret);
+			return 0;
+		}
+	}
+
+	if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+		fs_close(&file);
+		file_open = false;
+		ret = snprintk(response, sizeof(response),
+			       "{\"ok\":true,\"path\":\"%s\"}\n", path);
+		set_json_response(response_ctx, HTTP_200_OK, response, ret);
 	}
 
 	return 0;
@@ -239,6 +349,12 @@ static struct http_resource_detail_dynamic push_resource_detail = {
 	.cb = push_handler,
 };
 
+static struct http_resource_detail_dynamic pushbin_resource_detail = {
+	.common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+		   .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+	.cb = pushbin_handler,
+};
+
 static struct http_resource_detail_dynamic shell_resource_detail = {
 	.common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
 		   .type = HTTP_RESOURCE_TYPE_DYNAMIC},
@@ -254,5 +370,7 @@ static struct http_resource_detail_dynamic ota_resource_detail = {
 HTTP_RESOURCE_DEFINE(root_resource, webos_http_service, "/", &root_resource_detail);
 HTTP_RESOURCE_DEFINE(health_resource, webos_http_service, "/health", &health_resource_detail);
 HTTP_RESOURCE_DEFINE(push_resource, webos_http_service, "/push", &push_resource_detail);
+HTTP_RESOURCE_DEFINE(pushbin_resource, webos_http_service, "/pushbin",
+		     &pushbin_resource_detail);
 HTTP_RESOURCE_DEFINE(shell_resource, webos_http_service, "/shell", &shell_resource_detail);
 HTTP_RESOURCE_DEFINE(ota_resource, webos_http_service, "/ota", &ota_resource_detail);
