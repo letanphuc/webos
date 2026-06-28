@@ -18,5 +18,7 @@ manifest:
         # strictly needed by the application.
         name-allowlist:
           - hal_espressif # required by ESP32-S3 boards
+          - fatfs         # FatFS payload/config storage
           - mbedtls       # TLS support for the management server
+          - tf-psa-crypto # PSA crypto backend used by Wi-Fi security
           - mcuboot       # firmware update and rollback support

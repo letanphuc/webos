@@ -9,7 +9,13 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(app)
 
-target_sources(app PRIVATE src/main.cpp)
+target_sources(app PRIVATE src/main.c)
+
+zephyr_linker_sources(SECTIONS sections-rom.ld)
+zephyr_linker_section(
+  NAME http_resource_desc_webos_http_service
+  KVMA RAM_REGION GROUP RODATA_REGION
+)
 
 # The code below locates the git index file for this repository and adds it as a dependency for
 # the application VERSION file so that if the repo has a new commit added, even if no files in

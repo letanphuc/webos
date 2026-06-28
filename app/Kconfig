@@ -10,6 +10,18 @@ menu "Zephyr"
 source "Kconfig.zephyr"
 endmenu
 
+menu "WebOS"
+
+config WEBOS_WIFI_SSID
+	string "Wi-Fi SSID"
+	default ""
+
+config WEBOS_WIFI_PSK
+	string "Wi-Fi PSK"
+	default ""
+
+endmenu
+
 module = APP
 module-str = APP
 source "subsys/logging/Kconfig.template.log_config"

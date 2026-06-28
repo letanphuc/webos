@@ -1,0 +1,19 @@
+/ {
+	fstab {
+		compatible = "zephyr,fstab";
+
+		webos_fatfs: webos_fatfs {
+			compatible = "zephyr,fstab,fatfs";
+			automount;
+			disk-access;
+			mount-point = "/RAM:";
+		};
+	};
+
+	ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <256>;
+	};
+};
