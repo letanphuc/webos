@@ -1,5 +1,4 @@
 #include <zephyr/dfu/mcuboot.h>
-#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
 #include "hal/wifi/wifi.h"
@@ -7,6 +6,7 @@
 #include "services/ota/ota.h"
 #include "services/http/http.h"
 #include "services/iwasm/iwasm.h"
+#include "services/ssh/ssh.h"
 
 LOG_MODULE_REGISTER(webos, LOG_LEVEL_INF);
 
@@ -18,6 +18,7 @@ int main(void)
 	boot_write_img_confirmed();
 	init_filesystem_layout();
 	connect_wifi();
+	ssh_service_start();
 	iwasm_init();
 	webos_http_init();
 

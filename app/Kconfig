@@ -20,6 +20,14 @@ config WEBOS_WIFI_PSK
 	string "Wi-Fi PSK"
 	default ""
 
+config WEBOS_SSH_USERNAME
+	string "SSH username"
+	default "root"
+
+config WEBOS_SSH_PASSWORD
+	string "SSH password"
+	default "1"
+
 endmenu
 
 module = APP

@@ -20,6 +20,7 @@ target_sources(app PRIVATE
   src/services/http/http.c
   src/services/http/http_handlers.c
   src/services/iwasm/iwasm.c
+  src/services/ssh/ssh.c
 )
 
 zephyr_linker_sources(SECTIONS sections-rom.ld)

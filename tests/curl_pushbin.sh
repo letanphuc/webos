@@ -10,8 +10,10 @@ if [ -z "$local" ]; then
 	exit 1
 fi
 
-curl --fail --show-error --max-time 30 -i \
-	-X POST "http://${host}:8080/pushbin" \
-	-H "X-Webos-Path: ${path}" \
+{
+	printf '%s\n' "${path}"
+	cat "${local}"
+} | curl -v --fail --show-error --max-time 30 -i \
+	"http://${host}:8080/pushbin" \
 	-H 'Content-Type: application/octet-stream' \
-	--data-binary "@${local}"
+	--data-binary @-
