@@ -34,6 +34,49 @@ int ensure_dir(const char *path)
 	return ret;
 }
 
+static int ensure_parent_dirs(const char *path)
+{
+	char parent[128];
+	const char *last_slash = strrchr(path, '/');
+	size_t parent_len;
+	size_t mount_len = strlen(WEBOS_MOUNT_POINT);
+
+	if (last_slash == NULL || last_slash == path) {
+		return 0;
+	}
+
+	parent_len = last_slash - path;
+	if (parent_len >= sizeof(parent)) {
+		return -ENAMETOOLONG;
+	}
+
+	memcpy(parent, path, parent_len);
+	parent[parent_len] = '\0';
+
+	if (strncmp(parent, WEBOS_MOUNT_POINT, mount_len) != 0) {
+		return -EINVAL;
+	}
+
+	for (char *slash = parent + mount_len; *slash != '\0'; slash++) {
+		if (*slash != '/') {
+			continue;
+		}
+
+		*slash = '\0';
+		if (strlen(parent) > mount_len) {
+			int ret = ensure_dir(parent);
+
+			if (ret != 0) {
+				*slash = '/';
+				return ret;
+			}
+		}
+		*slash = '/';
+	}
+
+	return ensure_dir(parent);
+}
+
 int write_file(const char *path, const char *data)
 {
 	size_t len = strlen(data);
@@ -51,19 +94,10 @@ int write_file_bin(const char *path, const uint8_t *data, size_t data_len)
 		return -EINVAL;
 	}
 
-	{
-		char parent[128];
-		const char *last_slash = strrchr(path, '/');
-
-		if (last_slash != NULL && last_slash != path) {
-			size_t parent_len = last_slash - path;
-
-			if (parent_len < sizeof(parent)) {
-				memcpy(parent, path, parent_len);
-				parent[parent_len] = '\0';
-				ensure_dir(parent);
-			}
-		}
+	ret = ensure_parent_dirs(path);
+	if (ret != 0) {
+		LOG_ERR("write_file_bin: ensure_parent_dirs(%s) failed: %d", path, ret);
+		return ret;
 	}
 
 	fs_file_t_init(&file);
