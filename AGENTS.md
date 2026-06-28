@@ -9,8 +9,10 @@
 ## Workspace Commands
 
 - From the west workspace root `/Users/phuc/Work/webos`: `west init -l webos` then `west update`.
+- Use the existing Zephyr Python environment before ESP32-S3 builds: `source /Users/phuc/Work/zephyr/.venv/bin/activate`.
 - The manifest allowlist currently pulls only `zephyr`, `hal_espressif`, `mbedtls`, and `mcuboot`; add modules in `west.yml` before using other Zephyr subsystems that require external modules.
-- Build the app from the workspace root with `west build -b <board> webos/app` or from this repo with `west build -b <board> app`.
+- The requested MVP board is `esp32s3_devkitm/esp32s3/procpu`; current Zephyr maps that deprecated name to `esp32s3_devkitc/esp32s3/procpu`.
+- Build the app from the workspace root with `west build -b esp32s3_devkitm/esp32s3/procpu webos/app` or from `webos/app` after sourcing `.env` with `build`.
 - For debug config: `west build -b <board> webos/app -- -DEXTRA_CONF_FILE=debug.conf` from the workspace root.
 - Run application Twister builds with `west twister -T webos/app -v --inline-logs --integration` from the workspace root.
 - Run library tests with `west twister -T webos/tests -v --inline-logs --integration` from the workspace root.
@@ -19,8 +21,8 @@
 
 - `zephyr/module.yml` makes this repository a Zephyr module and sets `board_root: .` and `dts_root: .`; custom boards and DTS bindings under this repo are visible to Zephyr builds.
 - Root `CMakeLists.txt` is the module entry point. It adds `drivers/` and `lib/`, not the application entry point.
-- The current application entry point is `app/src/main.c`; it is still the upstream example using `CONFIG_SENSOR`, `CONFIG_BLINK`, `example_sensor`, and `blink_led`.
-- `app/sample.yaml` still targets `custom_plank` and `nucleo_f302r8`; update it before relying on CI/Twister for ESP32-S3 coverage.
+- The current application entry point is `app/src/main.c`; it is a minimal printk heartbeat app for ESP32-S3 bring-up.
+- `app/.env` defines local helper functions: `build`, `rebuild`, `flash`, `run`, `menuconfig`, `clean`, and `twister_app`.
 
 ## CI And Docs
 
