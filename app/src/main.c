@@ -2,6 +2,8 @@
 #include <string.h>
 
 #include <ff.h>
+#include <zephyr/dfu/flash_img.h>
+#include <zephyr/dfu/mcuboot.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -12,6 +14,7 @@
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/shell/shell_dummy.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
 #include <zephyr/app_version.h>
@@ -22,11 +25,16 @@ LOG_MODULE_REGISTER(webos, LOG_LEVEL_INF);
 #define WEBOS_MOUNT_POINT "/RAM:"
 #define WEBOS_HTTP_BODY_MAX 2048
 #define WEBOS_JSON_VALUE_MAX 1536
+#define WEBOS_OTA_REBOOT_DELAY_MS 2000
 
 static uint16_t webos_http_port = WEBOS_HTTP_PORT;
 static K_MUTEX_DEFINE(shell_lock);
 static K_SEM_DEFINE(wifi_connected, 0, 1);
 static K_SEM_DEFINE(ipv4_ready, 0, 1);
+static K_MUTEX_DEFINE(ota_lock);
+static struct flash_img_context ota_flash_ctx;
+static bool ota_active;
+static K_WORK_DELAYABLE_DEFINE(ota_reboot_work, NULL);
 static struct net_mgmt_event_callback wifi_cb;
 static struct net_mgmt_event_callback ipv4_cb;
 static FATFS webos_fatfs;
@@ -45,6 +53,14 @@ static const struct http_header json_headers[] = {
 static const struct http_header text_headers[] = {
 	{.name = "Content-Type", .value = "text/plain; charset=utf-8"},
 };
+
+static void ota_reboot_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	LOG_INF("Rebooting to apply OTA image");
+	sys_reboot(SYS_REBOOT_COLD);
+}
 
 static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint64_t mgmt_event,
 			       struct net_if *iface)
@@ -456,6 +472,71 @@ static int shell_handler(struct http_client_ctx *client, enum http_transaction_s
 	return 0;
 }
 
+static int ota_handler(struct http_client_ctx *client, enum http_transaction_status status,
+		       const struct http_request_ctx *request_ctx,
+		       struct http_response_ctx *response_ctx, void *user_data)
+{
+	ARG_UNUSED(client);
+	ARG_UNUSED(user_data);
+	static char response[96];
+	int ret = 0;
+
+	if (status == HTTP_SERVER_TRANSACTION_ABORTED) {
+		k_mutex_lock(&ota_lock, K_FOREVER);
+		ota_active = false;
+		k_mutex_unlock(&ota_lock);
+		return 0;
+	}
+
+	if (status == HTTP_SERVER_TRANSACTION_COMPLETE) {
+		return 0;
+	}
+
+	k_mutex_lock(&ota_lock, K_FOREVER);
+	if (!ota_active) {
+		ret = flash_img_init(&ota_flash_ctx);
+		if (ret != 0) {
+			ota_active = false;
+			k_mutex_unlock(&ota_lock);
+			ret = snprintk(response, sizeof(response), "{\"error\":%d}\n", ret);
+			set_json_response(response_ctx, HTTP_500_INTERNAL_SERVER_ERROR, response, ret);
+			return 0;
+		}
+		ota_active = true;
+		LOG_INF("OTA upload started");
+	}
+
+	if (request_ctx->data_len > 0) {
+		ret = flash_img_buffered_write(&ota_flash_ctx, request_ctx->data, request_ctx->data_len,
+					       status == HTTP_SERVER_REQUEST_DATA_FINAL);
+	}
+
+	if (ret == 0 && status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+		size_t written = flash_img_bytes_written(&ota_flash_ctx);
+
+		ota_active = false;
+		ret = boot_request_upgrade(BOOT_UPGRADE_TEST);
+		if (ret == 0) {
+			LOG_INF("OTA upload complete: %zu bytes", written);
+			k_work_reschedule(&ota_reboot_work, K_MSEC(WEBOS_OTA_REBOOT_DELAY_MS));
+			ret = snprintk(response, sizeof(response),
+				       "{\"ok\":true,\"bytes\":%zu,\"reboot_ms\":%d}\n", written,
+				       WEBOS_OTA_REBOOT_DELAY_MS);
+			set_json_response(response_ctx, HTTP_200_OK, response, ret);
+		} else {
+			ret = snprintk(response, sizeof(response), "{\"error\":%d}\n", ret);
+			set_json_response(response_ctx, HTTP_500_INTERNAL_SERVER_ERROR, response, ret);
+		}
+	} else if (ret != 0) {
+		ota_active = false;
+		ret = snprintk(response, sizeof(response), "{\"error\":%d}\n", ret);
+		set_json_response(response_ctx, HTTP_500_INTERNAL_SERVER_ERROR, response, ret);
+	}
+	k_mutex_unlock(&ota_lock);
+
+	return 0;
+}
+
 static struct http_resource_detail_dynamic root_resource_detail = {
 	.common = {.bitmask_of_supported_http_methods = BIT(HTTP_GET),
 		   .type = HTTP_RESOURCE_TYPE_DYNAMIC},
@@ -480,12 +561,19 @@ static struct http_resource_detail_dynamic shell_resource_detail = {
 	.cb = shell_handler,
 };
 
+static struct http_resource_detail_dynamic ota_resource_detail = {
+	.common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+		   .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+	.cb = ota_handler,
+};
+
 HTTP_SERVICE_DEFINE(webos_http_service, NULL, &webos_http_port, CONFIG_HTTP_SERVER_MAX_CLIENTS, 4,
 		    NULL, NULL, NULL);
 HTTP_RESOURCE_DEFINE(root_resource, webos_http_service, "/", &root_resource_detail);
 HTTP_RESOURCE_DEFINE(health_resource, webos_http_service, "/health", &health_resource_detail);
 HTTP_RESOURCE_DEFINE(push_resource, webos_http_service, "/push", &push_resource_detail);
 HTTP_RESOURCE_DEFINE(shell_resource, webos_http_service, "/shell", &shell_resource_detail);
+HTTP_RESOURCE_DEFINE(ota_resource, webos_http_service, "/ota", &ota_resource_detail);
 
 static void init_filesystem_layout(void)
 {
@@ -522,6 +610,8 @@ static void init_filesystem_layout(void)
 int main(void)
 {
 	LOG_INF("WebOS starting on ESP32-S3");
+	k_work_init_delayable(&ota_reboot_work, ota_reboot_handler);
+	boot_write_img_confirmed();
 
 	init_filesystem_layout();
 	connect_wifi();
