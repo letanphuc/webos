@@ -1,0 +1,6 @@
+board:
+  name: webos_esp32s3
+  full_name: WebOS ESP32-S3
+  vendor: webos
+  socs:
+  - name: esp32s3
