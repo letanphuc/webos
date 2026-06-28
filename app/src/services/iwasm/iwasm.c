@@ -15,12 +15,63 @@ LOG_MODULE_REGISTER(iwasm, LOG_LEVEL_INF);
 
 static bool runtime_ready;
 
+struct mem_header {
+	size_t size;
+};
+
+static void *iwasm_malloc(unsigned int size)
+{
+	struct mem_header *hdr = k_malloc(sizeof(struct mem_header) + size);
+
+	if (!hdr) {
+		return NULL;
+	}
+	hdr->size = size;
+	return (char *)hdr + sizeof(struct mem_header);
+}
+
+static void iwasm_free(void *ptr)
+{
+	if (!ptr) {
+		return;
+	}
+	k_free((char *)ptr - sizeof(struct mem_header));
+}
+
+static void *iwasm_realloc(void *ptr, unsigned int size)
+{
+	struct mem_header *hdr;
+	size_t old_size;
+	void *new_ptr;
+
+	if (!ptr) {
+		return iwasm_malloc(size);
+	}
+	if (size == 0) {
+		iwasm_free(ptr);
+		return NULL;
+	}
+
+	hdr = (struct mem_header *)((char *)ptr - sizeof(struct mem_header));
+	old_size = hdr->size;
+	new_ptr = iwasm_malloc(size);
+	if (new_ptr) {
+		memcpy(new_ptr, ptr, old_size < (size_t)size ? old_size
+							   : (size_t)size);
+		iwasm_free(ptr);
+	}
+	return new_ptr;
+}
+
 int iwasm_init(void)
 {
 	RuntimeInitArgs init_args;
 
 	memset(&init_args, 0, sizeof(init_args));
-	init_args.mem_alloc_type = Alloc_With_System_Allocator;
+	init_args.mem_alloc_type = Alloc_With_Allocator;
+	init_args.mem_alloc_option.allocator.malloc_func = iwasm_malloc;
+	init_args.mem_alloc_option.allocator.realloc_func = iwasm_realloc;
+	init_args.mem_alloc_option.allocator.free_func = iwasm_free;
 
 	if (!wasm_runtime_full_init(&init_args)) {
 		LOG_ERR("Failed to initialize WAMR runtime");
@@ -70,7 +121,7 @@ static int iwasm_exec_file(const char *path)
 
 	fs_seek(&file, 0, FS_SEEK_SET);
 
-	buf = (uint8_t *)malloc(file_size);
+	buf = (uint8_t *)k_malloc(file_size);
 	if (!buf) {
 		LOG_ERR("Out of memory reading %s (%d bytes)", path, file_size);
 		fs_close(&file);
@@ -115,7 +166,7 @@ static int iwasm_exec_file(const char *path)
 cleanup_module:
 	wasm_runtime_unload(module);
 cleanup_buf:
-	free(buf);
+	k_free(buf);
 	return ret;
 }
 
