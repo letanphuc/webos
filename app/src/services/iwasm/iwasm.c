@@ -20,6 +20,7 @@ int iwasm_init(void)
 	RuntimeInitArgs init_args;
 
 	memset(&init_args, 0, sizeof(init_args));
+	init_args.mem_alloc_type = Alloc_With_System_Allocator;
 
 	if (!wasm_runtime_full_init(&init_args)) {
 		LOG_ERR("Failed to initialize WAMR runtime");
