@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <zephyr/app_version.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/http/server.h>
 #include <zephyr/net/http/service.h>
@@ -244,7 +245,8 @@ static int shell_handler(struct http_client_ctx *client, enum http_transaction_s
 	static char body[WEBOS_HTTP_BODY_MAX];
 	static size_t cursor;
 	static char cmd[256];
-	static char response[CONFIG_SHELL_BACKEND_DUMMY_BUF_SIZE + 64];
+	static char input[256];
+	static char response[CONFIG_SHELL_BACKEND_DUMMY_BUF_SIZE * 2 + 96];
 	static char escaped[CONFIG_SHELL_BACKEND_DUMMY_BUF_SIZE * 2];
 	const struct shell *sh;
 	const char *output;
@@ -274,21 +276,31 @@ static int shell_handler(struct http_client_ctx *client, enum http_transaction_s
 	body[cursor] = '\0';
 	cursor = 0;
 
-	ret = json_get_string(body, "cmd", cmd, sizeof(cmd));
-	if (ret != 0) {
-		ret = snprintk(response, sizeof(response), "{\"error\":%d}\n", ret);
-		set_json_response(response_ctx, HTTP_400_BAD_REQUEST, response, ret);
-		return 0;
-	}
-
 	k_mutex_lock(&shell_lock, K_FOREVER);
 	sh = shell_backend_dummy_get_ptr();
-	shell_backend_dummy_clear_output(sh);
-	ret = shell_execute_cmd(sh, cmd);
+
+	if (json_has_key(body, "cmd")) {
+		ret = json_get_string(body, "cmd", cmd, sizeof(cmd));
+		if (ret == 0) {
+			shell_backend_dummy_clear_output(sh);
+			ret = shell_execute_cmd(sh, cmd);
+		}
+	} else if (json_has_key(body, "input")) {
+		ret = json_get_string(body, "input", input, sizeof(input));
+		if (ret == 0) {
+			ret = shell_backend_dummy_push_input(sh, input, strlen(input));
+			k_sleep(K_MSEC(20));
+		}
+	} else {
+		shell_backend_dummy_clear_output(sh);
+		ret = 0;
+	}
+
 	output = shell_backend_dummy_get_output(sh, &output_len);
 	append_json_string(escaped, sizeof(escaped), output, output_len);
-	ret = snprintk(response, sizeof(response), "{\"rc\":%d,\"output\":\"%s\"}\n", ret,
-		       escaped);
+	ret = snprintk(response, sizeof(response),
+		       "{\"rc\":%d,\"output\":\"%s\",\"attached\":%s}\n", ret,
+		       escaped, json_has_key(body, "cmd") ? "false" : "true");
 	k_mutex_unlock(&shell_lock);
 
 	set_json_response(response_ctx, HTTP_200_OK, response, ret);

@@ -13,6 +13,7 @@ LOG_MODULE_REGISTER(webos_wifi, LOG_LEVEL_INF);
 
 #define WIFI_RETRY_MAX     5
 #define WIFI_RETRY_DELAY_MS 3000
+#define WIFI_STARTUP_DELAY_MS 5000
 
 static K_SEM_DEFINE(wifi_connected, 0, 1);
 static K_SEM_DEFINE(ipv4_ready, 0, 1);
@@ -89,6 +90,9 @@ int connect_wifi(void)
 	net_mgmt_add_event_callback(&wifi_cb);
 	net_mgmt_init_event_callback(&ipv4_cb, ipv4_event_handler, NET_EVENT_IPV4_ADDR_ADD);
 	net_mgmt_add_event_callback(&ipv4_cb);
+
+	LOG_INF("Waiting for Wi-Fi stack startup");
+	k_sleep(K_MSEC(WIFI_STARTUP_DELAY_MS));
 
 	sta_config.ssid = (const uint8_t *)CONFIG_WEBOS_WIFI_SSID;
 	sta_config.ssid_length = strlen(CONFIG_WEBOS_WIFI_SSID);
