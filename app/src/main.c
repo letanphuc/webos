@@ -642,9 +642,4 @@ int main(void)
 	} else {
 		LOG_INF("HTTP server listening on port %u", webos_http_port);
 	}
-
-	while (1) {
-		LOG_INF("WebOS heartbeat");
-		k_sleep(K_SECONDS(10));
-	}
 }
