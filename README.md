@@ -1,138 +1,223 @@
-# Zephyr Example Application
+# WebOS
 
-<a href="https://github.com/zephyrproject-rtos/example-application/actions/workflows/build.yml?query=branch%3Amain">
-  <img src="https://github.com/zephyrproject-rtos/example-application/actions/workflows/build.yml/badge.svg?event=push">
-</a>
-<a href="https://github.com/zephyrproject-rtos/example-application/actions/workflows/docs.yml?query=branch%3Amain">
-  <img src="https://github.com/zephyrproject-rtos/example-application/actions/workflows/docs.yml/badge.svg?event=push">
-</a>
-<a href="https://zephyrproject-rtos.github.io/example-application">
-  <img alt="Documentation" src="https://img.shields.io/badge/documentation-3D578C?logo=sphinx&logoColor=white">
-</a>
-<a href="https://zephyrproject-rtos.github.io/example-application/doxygen">
-  <img alt="API Documentation" src="https://img.shields.io/badge/API-documentation-3D578C?logo=c&logoColor=white">
-</a>
+WebOS is a Zephyr-based firmware project for ESP32-S3 devices. The goal is to keep a stable host OS on the device and run small, disposable application payloads through WebAssembly.
 
-This repository contains a Zephyr example application. The main purpose of this
-repository is to serve as a reference on how to structure Zephyr-based
-applications. Some of the features demonstrated in this example are:
+The current tree is in bring-up. The app builds as a C++ Zephyr application and currently runs a minimal heartbeat on ESP32-S3.
 
-- Basic [Zephyr application][app_dev] skeleton
-- [Zephyr workspace applications][workspace_app]
-- [Zephyr modules][modules]
-- [West T2 topology][west_t2]
-- [Custom boards][board_porting]
-- Custom [devicetree bindings][bindings]
-- Out-of-tree [drivers][drivers]
-- Out-of-tree libraries
-- Example CI configuration (using GitHub Actions)
-- Custom [west extension][west_ext]
-- Custom [Zephyr runner][runner_ext]
-- Doxygen and Sphinx documentation boilerplate
+## Direction
 
-This repository is versioned together with the [Zephyr main tree][zephyr]. This
-means that every time that Zephyr is tagged, this repository is tagged as well
-with the same version number, and the [manifest](west.yml) entry for `zephyr`
-will point to the corresponding Zephyr tag. For example, the `example-application`
-v2.6.0 will point to Zephyr v2.6.0. Note that the `main` branch always
-points to the development branch of Zephyr, also `main`.
+WebOS is intended to become a small WebAssembly host for ESP devices:
 
-[app_dev]: https://docs.zephyrproject.org/latest/develop/application/index.html
-[workspace_app]: https://docs.zephyrproject.org/latest/develop/application/index.html#zephyr-workspace-app
-[modules]: https://docs.zephyrproject.org/latest/develop/modules.html
-[west_t2]: https://docs.zephyrproject.org/latest/develop/west/workspaces.html#west-t2
-[board_porting]: https://docs.zephyrproject.org/latest/guides/porting/board_porting.html
-[bindings]: https://docs.zephyrproject.org/latest/guides/dts/bindings.html
-[drivers]: https://docs.zephyrproject.org/latest/reference/drivers/index.html
-[zephyr]: https://github.com/zephyrproject-rtos/zephyr
-[west_ext]: https://docs.zephyrproject.org/latest/develop/west/extensions.html
-[runner_ext]: https://docs.zephyrproject.org/latest/develop/modules.html#external-runners
+- Zephyr RTOS as the base firmware
+- ESP32-S3 with PSRAM as the first target
+- WAMR `iwasm` as the WASM runtime
+- host-side AOT compilation for payloads
+- FatFS for payload storage
+- a small first ABI for GPIO, sleep, and logging
 
-## Getting Started
+See `docs/idea.md` for the architecture notes and MVP constraints.
 
-Before getting started, make sure you have a proper Zephyr development
-environment. Follow the official
-[Zephyr Getting Started Guide](https://docs.zephyrproject.org/latest/getting_started/index.html).
+## Repository Layout
 
-### Initialization
+This repository is a Zephyr workspace application. In the local west workspace, it lives at:
 
-The first step is to initialize the workspace folder (``my-workspace``) where
-the ``example-application`` and all Zephyr modules will be cloned. Run the following
-command:
+```text
+/Users/phuc/Work/webos/webos
+```
 
-```shell
-# initialize my-workspace for the example-application (main branch)
-west init -m https://github.com/zephyrproject-rtos/example-application --mr main my-workspace
-# update Zephyr modules
-cd my-workspace
+Important paths:
+
+```text
+app/              Zephyr application entry point
+app/src/main.cpp  current C++ firmware entry point
+docs/idea.md      product and architecture direction
+west.yml          west manifest for Zephyr and required modules
+boards/           out-of-tree board support, if needed
+drivers/          out-of-tree drivers
+lib/              out-of-tree libraries
+tests/            Twister tests
+```
+
+The west workspace root is one level above this repository:
+
+```text
+/Users/phuc/Work/webos
+```
+
+Generated build output should live at:
+
+```text
+/Users/phuc/Work/webos/build
+```
+
+## Prerequisites
+
+Use a Zephyr development environment with:
+
+- `west`
+- CMake and Ninja
+- Zephyr SDK with ESP32-S3 Xtensa toolchain support
+- Python virtual environment with Zephyr dependencies
+- `ccache` for faster rebuilds
+- ESP flashing tools, including `esptool`
+
+This workspace expects the helper environment at `/Users/phuc/Work/webos/.env` to activate the Python venv and load `webos/app/.env`.
+
+## Workspace Setup
+
+From the workspace root:
+
+```sh
+cd /Users/phuc/Work/webos
+west init -l webos
 west update
 ```
 
-### Building and running
+Then load the workspace environment:
 
-To build the application, run the following command:
-
-```shell
-cd example-application
-west build -b $BOARD app
+```sh
+source .env
 ```
 
-where `$BOARD` is the target board.
+This sets the main local variables:
 
-You can use the `custom_plank` board found in this
-repository. Note that Zephyr sample boards may be used if an
-appropriate overlay is provided (see `app/boards`).
-
-A sample debug configuration is also provided. To apply it, run the following
-command:
-
-```shell
-west build -b $BOARD app -- -DEXTRA_CONF_FILE=debug.conf
+```text
+WEBOS_APP_DIR=/Users/phuc/Work/webos/webos/app
+WEBOS_BUILD_DIR=/Users/phuc/Work/webos/build
+WEBOS_BOARD=esp32s3_devkitm/esp32s3/procpu
 ```
 
-Once you have built the application, run the following command to flash it:
+Zephyr currently maps `esp32s3_devkitm/esp32s3/procpu` to `esp32s3_devkitc/esp32s3/procpu` and prints a deprecation warning during configure.
 
-```shell
-west flash
+## Build
+
+After sourcing the environment:
+
+```sh
+build
 ```
 
-### Testing
+For a clean rebuild:
 
-To execute Twister integration tests, run the following command:
-
-```shell
-west twister -T tests --integration
+```sh
+rebuild
 ```
 
-### Documentation
+For debug config:
 
-A minimal documentation setup is provided for Doxygen and Sphinx. To build the
-documentation first change to the ``doc`` folder:
-
-```shell
-cd doc
+```sh
+build -- -DEXTRA_CONF_FILE=debug.conf
 ```
 
-Before continuing, check if you have Doxygen installed. It is recommended to
-use the same Doxygen version used in [CI](.github/workflows/docs.yml). To
-install Sphinx, make sure you have a Python installation in place and run:
+The build helper enables Zephyr ccache by default with `USE_CCACHE=1`. To disable it for one build:
 
-```shell
-pip install -r requirements.txt
+```sh
+USE_CCACHE=0 build
 ```
 
-API documentation (Doxygen) can be built using the following command:
+## Flash And Monitor
 
-```shell
-doxygen
+Flash the current build:
+
+```sh
+flash
 ```
 
-The output will be stored in the ``_build_doxygen`` folder. Similarly, the
-Sphinx documentation (HTML) can be built using the following command:
+Build and flash:
 
-```shell
-make html
+```sh
+run
 ```
 
-The output will be stored in the ``_build_sphinx`` folder. You may check for
-other output formats other than HTML by running ``make help``.
+Open the ESP monitor:
+
+```sh
+monitor
+```
+
+The default serial settings are:
+
+```text
+WEBOS_PORT=/dev/tty.usbserial-1130
+WEBOS_BAUD=115200
+```
+
+Override them before sourcing `.env` or before running the helper:
+
+```sh
+WEBOS_PORT=/dev/tty.usbserial-0001 flash
+```
+
+## Configuration
+
+Open Zephyr menuconfig for the current build directory:
+
+```sh
+menuconfig
+```
+
+The application config is in:
+
+```text
+app/prj.conf
+app/debug.conf
+```
+
+The app currently enables C++ support with:
+
+```text
+CONFIG_CPP=y
+CONFIG_REQUIRES_FULL_LIBCPP=y
+```
+
+## Testing
+
+Run the app Twister build:
+
+```sh
+twister_app
+```
+
+Run repository tests:
+
+```sh
+west twister -T webos/tests -v --inline-logs --integration
+```
+
+## Cleaning
+
+Remove the active build directory:
+
+```sh
+clean
+```
+
+This removes `/Users/phuc/Work/webos/build` when the standard environment is loaded.
+
+## Current Firmware Behavior
+
+The current app entry point is `app/src/main.cpp`. It prints a startup message and a one-second heartbeat:
+
+```text
+WebOS hello from Zephyr on ESP32-S3
+WebOS heartbeat
+```
+
+## MVP Constraints
+
+Keep early implementation choices aligned with `docs/idea.md`:
+
+- first target is ESP32-S3 with PSRAM
+- prefer WAMR AOT payloads built by the host-side compiler
+- do not add an OS memory ABI such as `os->mem` or `os->malloc()` for MVP
+- first payload path is `/apps/blink.aot`
+- first ABI should stay minimal: GPIO set, sleep milliseconds, and log print
+- FatFS is the planned filesystem
+- USB mass-storage mode must be exclusive with payload execution and filesystem-changing HTTP operations
+
+## Notes For Contributors
+
+- Treat this repo as the application/module repo, not the Zephyr tree itself.
+- Keep generated build output out of `webos/app`; use `/Users/phuc/Work/webos/build`.
+- Add required Zephyr modules to `west.yml` before using subsystems that need external module repositories.
+- Prefer small, direct changes while the MVP is still being shaped.
