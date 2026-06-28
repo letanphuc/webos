@@ -26,6 +26,8 @@ LOG_MODULE_REGISTER(webos, LOG_LEVEL_INF);
 #define WEBOS_HTTP_BODY_MAX 2048
 #define WEBOS_JSON_VALUE_MAX 1536
 #define WEBOS_OTA_REBOOT_DELAY_MS 2000
+#define WIFI_RETRY_MAX 5
+#define WIFI_RETRY_DELAY_MS 3000
 
 static uint16_t webos_http_port = WEBOS_HTTP_PORT;
 static K_MUTEX_DEFINE(shell_lock);
@@ -138,17 +140,35 @@ static int connect_wifi(void)
 	sta_config.channel = WIFI_CHANNEL_ANY;
 	sta_config.band = WIFI_FREQ_BAND_2_4_GHZ;
 
-	LOG_INF("Connecting to Wi-Fi SSID: %s", CONFIG_WEBOS_WIFI_SSID);
-	ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &sta_config,
-		       sizeof(struct wifi_connect_req_params));
-	if (ret != 0) {
-		LOG_ERR("NET_REQUEST_WIFI_CONNECT failed: %d", ret);
-		return ret;
+	for (int attempt = 1; attempt <= WIFI_RETRY_MAX; attempt++) {
+		while (k_sem_take(&wifi_connected, K_NO_WAIT) == 0) {
+		}
+
+		LOG_INF("Connecting to Wi-Fi SSID: %s (attempt %d/%d)", CONFIG_WEBOS_WIFI_SSID,
+			attempt, WIFI_RETRY_MAX);
+		ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &sta_config,
+			       sizeof(struct wifi_connect_req_params));
+		if (ret != 0) {
+			LOG_ERR("NET_REQUEST_WIFI_CONNECT failed: %d", ret);
+			if (attempt < WIFI_RETRY_MAX) {
+				k_sleep(K_MSEC(WIFI_RETRY_DELAY_MS));
+			}
+			continue;
+		}
+
+		ret = k_sem_take(&wifi_connected, K_SECONDS(30));
+		if (ret == 0) {
+			break;
+		}
+
+		LOG_WRN("Wi-Fi connect timed out (attempt %d/%d)", attempt, WIFI_RETRY_MAX);
+		if (attempt < WIFI_RETRY_MAX) {
+			k_sleep(K_MSEC(WIFI_RETRY_DELAY_MS));
+		}
 	}
 
-	ret = k_sem_take(&wifi_connected, K_SECONDS(30));
 	if (ret != 0) {
-		LOG_ERR("Timed out waiting for Wi-Fi connection");
+		LOG_ERR("Wi-Fi connection failed after %d attempts", WIFI_RETRY_MAX);
 		return ret;
 	}
 

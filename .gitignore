@@ -6,6 +6,9 @@
 # python
 .venv
 
+# local wifi credentials
+app/wifi.conf
+
 # build
 /build*
 /twister-out*
