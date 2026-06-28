@@ -22,6 +22,7 @@ target_sources(app PRIVATE
   src/services/iwasm/iwasm.c
 )
 
+target_sources_ifdef(CONFIG_WEBOS_LOG_BUFFER app PRIVATE src/services/log_buffer/log_buffer.c)
 target_sources_ifdef(CONFIG_WEBOS_SSH app PRIVATE src/services/ssh/ssh.c)
 
 zephyr_linker_sources(SECTIONS sections-rom.ld)

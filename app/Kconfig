@@ -20,6 +20,31 @@ config WEBOS_WIFI_PSK
 	string "Wi-Fi PSK"
 	default ""
 
+config WEBOS_LOG_BUFFER
+	bool "Enable WebOS log buffer for webdb log command"
+	select LOG_OUTPUT
+	help
+	  In-memory ring buffer that captures Zephyr log output
+	  for retrieval via HTTP POST /log.  Adds a log backend
+	  that mirrors every LOG_* call into a mutable buffer.
+
+if WEBOS_LOG_BUFFER
+
+config WEBOS_LOG_BUFFER_SIZE
+	int "Ring buffer size in bytes"
+	default 4096
+	range 1024 65536
+
+config WEBOS_LOG_BACKEND_BUF_SIZE
+	int "Log backend output buffer size"
+	default 256
+
+config WEBOS_LOG_BACKEND_OUTPUT_DEFAULT
+	int "Default log output format"
+	default 0
+
+endif
+
 config WEBOS_SSH
 	bool "Enable SSH shell server"
 	default n

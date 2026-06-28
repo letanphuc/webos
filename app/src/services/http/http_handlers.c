@@ -14,6 +14,7 @@
 #include "services/http/http.h"
 #include "services/http/http_handlers.h"
 #include "services/fs/fs.h"
+#include "services/log_buffer/log_buffer.h"
 #include "services/ota/ota.h"
 #include "utils/json/json.h"
 
@@ -359,6 +360,62 @@ static int ota_handler(struct http_client_ctx *client, enum http_transaction_sta
 	return 0;
 }
 
+static int log_handler(struct http_client_ctx *client,
+		       enum http_transaction_status status,
+		       const struct http_request_ctx *request_ctx,
+		       struct http_response_ctx *response_ctx, void *user_data)
+{
+	ARG_UNUSED(client);
+	ARG_UNUSED(user_data);
+	static char body[WEBOS_HTTP_BODY_MAX];
+	static size_t cursor;
+	static char response[WEBOS_HTTP_BODY_MAX];
+	static char messages[WEBOS_HTTP_BODY_MAX];
+	static char escaped[WEBOS_HTTP_BODY_MAX * 2];
+	size_t msg_len;
+	bool clear = false;
+	int ret;
+
+	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
+	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
+		cursor = 0;
+		return 0;
+	}
+
+	if (cursor + request_ctx->data_len >= sizeof(body)) {
+		cursor = 0;
+		static const char too_large[] = "{\"error\":\"request too large\"}\n";
+		set_json_response(response_ctx, HTTP_413_PAYLOAD_TOO_LARGE,
+				  too_large, strlen(too_large));
+		return 0;
+	}
+
+	memcpy(body + cursor, request_ctx->data, request_ctx->data_len);
+	cursor += request_ctx->data_len;
+
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	body[cursor] = '\0';
+	cursor = 0;
+
+	clear = json_has_key(body, "clear");
+
+	msg_len = log_buffer_read(messages, sizeof(messages));
+
+	if (clear) {
+		log_buffer_clear();
+	}
+
+	append_json_string(escaped, sizeof(escaped), messages, msg_len);
+	ret = snprintk(response, sizeof(response), "{\"messages\":\"%s\"}\n",
+		       escaped);
+
+	set_json_response(response_ctx, HTTP_200_OK, response, ret);
+	return 0;
+}
+
 static struct http_resource_detail_dynamic root_resource_detail = {
 	.common = {.bitmask_of_supported_http_methods = BIT(HTTP_GET),
 		   .type = HTTP_RESOURCE_TYPE_DYNAMIC},
@@ -389,6 +446,12 @@ static struct http_resource_detail_dynamic shell_resource_detail = {
 	.cb = shell_handler,
 };
 
+static struct http_resource_detail_dynamic log_resource_detail = {
+	.common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+		   .type = HTTP_RESOURCE_TYPE_DYNAMIC},
+	.cb = log_handler,
+};
+
 static struct http_resource_detail_dynamic ota_resource_detail = {
 	.common = {.bitmask_of_supported_http_methods = BIT(HTTP_POST),
 		   .type = HTTP_RESOURCE_TYPE_DYNAMIC},
@@ -401,4 +464,5 @@ HTTP_RESOURCE_DEFINE(push_resource, webos_http_service, "/push", &push_resource_
 HTTP_RESOURCE_DEFINE(pushbin_resource, webos_http_service, "/pushbin",
 		     &pushbin_resource_detail);
 HTTP_RESOURCE_DEFINE(shell_resource, webos_http_service, "/shell", &shell_resource_detail);
+HTTP_RESOURCE_DEFINE(log_resource, webos_http_service, "/log", &log_resource_detail);
 HTTP_RESOURCE_DEFINE(ota_resource, webos_http_service, "/ota", &ota_resource_detail);
