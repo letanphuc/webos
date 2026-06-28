@@ -3,19 +3,20 @@
 ## Repository Role
 
 - This repo is a Zephyr workspace application, not the Zephyr tree itself. The local manifest is `west.yml`; the app repo lives at `webos/` inside the west workspace root.
-- The current code is still mostly `zephyrproject-rtos/example-application` scaffolding. Treat `docs/idea.md` as the product direction for WebOS: Zephyr + WAMR `iwasm`, ESP32-S3 with PSRAM, FatFS, host-side AOT, trusted MVP payloads.
+- OpenCode is intended to start from `/Users/phuc/Work/webos`; its config is `/Users/phuc/Work/webos/opencode.json` and loads this file through `webos/AGENTS.md`.
+- Treat `docs/idea.md` as the product direction for WebOS: Zephyr + WAMR `iwasm`, ESP32-S3 with PSRAM, FatFS, host-side AOT, trusted MVP payloads.
 - Keep `docs/idea.md` when replacing or pruning example-application files.
 
 ## Workspace Commands
 
 - From the west workspace root `/Users/phuc/Work/webos`: `west init -l webos` then `west update`.
-- Use the workspace-root env first: `cd /Users/phuc/Work/webos && source .env`. It activates `/Users/phuc/Work/zephyr/.venv`, points at `webos/app`, and defines the dev helpers.
+- Use the workspace-root env first: `cd /Users/phuc/Work/webos && source .env`. It activates `/Users/phuc/Work/zephyr/.venv`, sets `WEBOS_APP_DIR=/Users/phuc/Work/webos/webos/app`, sets `WEBOS_BUILD_DIR=/Users/phuc/Work/webos/build`, and loads `webos/app/.env`.
 - The manifest allowlist currently pulls only `zephyr`, `hal_espressif`, `mbedtls`, and `mcuboot`; add modules in `west.yml` before using other Zephyr subsystems that require external modules.
 - The requested MVP board is `esp32s3_devkitm/esp32s3/procpu`; current Zephyr maps that deprecated name to `esp32s3_devkitc/esp32s3/procpu`.
 - After `source .env`, use `build`, `rebuild`, `flash`, `run`, `monitor`, `menuconfig`, `clean`, and `twister_app` from the workspace root.
 - `run` builds and flashes. `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud.
 - For debug config after `source .env`: `build -- -DEXTRA_CONF_FILE=debug.conf`.
-- Run application Twister builds with `west twister -T webos/app -v --inline-logs --integration` from the workspace root.
+- Run application Twister builds after `source .env` with `twister_app`.
 - Run library tests with `west twister -T webos/tests -v --inline-logs --integration` from the workspace root.
 
 ## Current Zephyr Wiring
@@ -23,7 +24,7 @@
 - `zephyr/module.yml` makes this repository a Zephyr module and sets `board_root: .` and `dts_root: .`; custom boards and DTS bindings under this repo are visible to Zephyr builds.
 - Root `CMakeLists.txt` is the module entry point. It adds `drivers/` and `lib/`, not the application entry point.
 - The current application entry point is `app/src/main.c`; it is a minimal printk heartbeat app for ESP32-S3 bring-up.
-- `/Users/phuc/Work/webos/.env` delegates to `app/.env`; update both if helper behavior changes.
+- `/Users/phuc/Work/webos/.env` is outside this git repo but is part of the local workspace contract; keep it aligned with `app/.env` if helper behavior changes.
 
 ## CI And Docs
 
