@@ -24,8 +24,40 @@
 
 - `zephyr/module.yml` makes this repository a Zephyr module and sets `board_root: .` and `dts_root: .`; custom boards and DTS bindings under this repo are visible to Zephyr builds.
 - Root `CMakeLists.txt` is the module entry point. It adds `drivers/` and `lib/`, not the application entry point.
-- The current application entry point is `app/src/main.c`; it provides Wi-Fi STA with retry, HTTP server (port 8080), JSON RPC shell, FatFS push API, and MCUboot OTA.
 - `/Users/phuc/Work/webos/.env` is outside this git repo but is part of the local workspace contract; keep it aligned with `app/.env` if helper behavior changes.
+
+## Application Source Layout
+
+The application source lives under `app/src/` and is organised in four layers:
+
+```
+app/src/
+├── main.c                              # Entry point: init sequence only
+├── hal/
+│   └── wifi/
+│       ├── wifi.h / wifi.c             # Wi-Fi STA connect with retry + DHCP
+├── utils/
+│   └── json/
+│       ├── json.h / json.c             # JSON string parsing and escaping
+└── services/
+    ├── fs/
+    │   ├── fs.h / fs.c                 # FatFS mount, directory layout, file I/O
+    ├── ota/
+    │   ├── ota.h / ota.c               # OTA state machine (flash_img + MCUboot)
+    └── http/
+        ├── http.h / http.c             # Server config, response helpers, SERVICE_DEFINE
+        ├── http_handlers.h
+        └── http_handlers.c             # 5 endpoint handlers + RESOURCE_DEFINE macros
+```
+
+- **`hal/`** — hardware abstraction layer. Currently `wifi/` owns the Wi-Fi connection sequence.
+- **`utils/`** — shared utilities. Currently `json/` provides `json_get_string()` and `append_json_string()`.
+- **`services/`** — higher-level services. Each service is a self-contained directory.
+  - `fs/` — FatFS operations: `init_filesystem_layout()`, `write_file()`, `ensure_dir()`, `webos_path_allowed()`.
+  - `ota/` — clean API (`ota_init/begin/write/finish/abort`) with internal per-call locking; the HTTP handler never touches the flash context or mutex directly.
+  - `http/` — `http.c` owns the server definition and JSON/text response helpers; `http_handlers.c` owns all five endpoint handlers (`GET /`, `GET /health`, `POST /push`, `POST /shell`, `POST /ota`) and registers them via iterable linker sections.
+- `app/CMakeLists.txt` lists every `.c` file and adds `target_include_directories(app PRIVATE src)` so that `#include "hal/wifi/wifi.h"`-style paths work from any source file.
+- `app/sections-rom.ld` provides the iterable ROM section that binds `HTTP_RESOURCE_DEFINE` entries from `http_handlers.c` to the `HTTP_SERVICE_DEFINE` in `http.c`.
 
 ## CI And Docs
 

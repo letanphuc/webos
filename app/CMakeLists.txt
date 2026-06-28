@@ -9,7 +9,17 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(app)
 
-target_sources(app PRIVATE src/main.c)
+target_include_directories(app PRIVATE src)
+
+target_sources(app PRIVATE
+  src/main.c
+  src/utils/json/json.c
+  src/hal/wifi/wifi.c
+  src/services/fs/fs.c
+  src/services/ota/ota.c
+  src/services/http/http.c
+  src/services/http/http_handlers.c
+)
 
 zephyr_linker_sources(SECTIONS sections-rom.ld)
 zephyr_linker_section(
