@@ -9,11 +9,12 @@
 ## Workspace Commands
 
 - From the west workspace root `/Users/phuc/Work/webos`: `west init -l webos` then `west update`.
-- Use the existing Zephyr Python environment before ESP32-S3 builds: `source /Users/phuc/Work/zephyr/.venv/bin/activate`.
+- Use the workspace-root env first: `cd /Users/phuc/Work/webos && source .env`. It activates `/Users/phuc/Work/zephyr/.venv`, points at `webos/app`, and defines the dev helpers.
 - The manifest allowlist currently pulls only `zephyr`, `hal_espressif`, `mbedtls`, and `mcuboot`; add modules in `west.yml` before using other Zephyr subsystems that require external modules.
 - The requested MVP board is `esp32s3_devkitm/esp32s3/procpu`; current Zephyr maps that deprecated name to `esp32s3_devkitc/esp32s3/procpu`.
-- Build the app from the workspace root with `west build -b esp32s3_devkitm/esp32s3/procpu webos/app` or from `webos/app` after sourcing `.env` with `build`.
-- For debug config: `west build -b <board> webos/app -- -DEXTRA_CONF_FILE=debug.conf` from the workspace root.
+- After `source .env`, use `build`, `rebuild`, `flash`, `run`, `monitor`, `menuconfig`, `clean`, and `twister_app` from the workspace root.
+- `run` builds and flashes. `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud.
+- For debug config after `source .env`: `build -- -DEXTRA_CONF_FILE=debug.conf`.
 - Run application Twister builds with `west twister -T webos/app -v --inline-logs --integration` from the workspace root.
 - Run library tests with `west twister -T webos/tests -v --inline-logs --integration` from the workspace root.
 
@@ -22,7 +23,7 @@
 - `zephyr/module.yml` makes this repository a Zephyr module and sets `board_root: .` and `dts_root: .`; custom boards and DTS bindings under this repo are visible to Zephyr builds.
 - Root `CMakeLists.txt` is the module entry point. It adds `drivers/` and `lib/`, not the application entry point.
 - The current application entry point is `app/src/main.c`; it is a minimal printk heartbeat app for ESP32-S3 bring-up.
-- `app/.env` defines local helper functions: `build`, `rebuild`, `flash`, `run`, `menuconfig`, `clean`, and `twister_app`.
+- `/Users/phuc/Work/webos/.env` delegates to `app/.env`; update both if helper behavior changes.
 
 ## CI And Docs
 
