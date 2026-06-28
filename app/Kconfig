@@ -20,13 +20,25 @@ config WEBOS_WIFI_PSK
 	string "Wi-Fi PSK"
 	default ""
 
+config WEBOS_SSH
+	bool "Enable SSH shell server"
+	default n
+	select DNS_RESOLVER
+	select SSH_SERVER
+	select SHELL_BACKEND_SSH
+	help
+	  Enable the SSH shell server. Disabled by default because the SSH stack is
+	  memory-heavy on the ESP32-S3 target.
+
 config WEBOS_SSH_USERNAME
 	string "SSH username"
 	default "root"
+	depends on WEBOS_SSH
 
 config WEBOS_SSH_PASSWORD
 	string "SSH password"
 	default "1"
+	depends on WEBOS_SSH
 
 endmenu
 

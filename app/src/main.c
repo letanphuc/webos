@@ -6,7 +6,9 @@
 #include "services/ota/ota.h"
 #include "services/http/http.h"
 #include "services/iwasm/iwasm.h"
+#if defined(CONFIG_WEBOS_SSH)
 #include "services/ssh/ssh.h"
+#endif
 
 LOG_MODULE_REGISTER(webos, LOG_LEVEL_INF);
 
@@ -18,7 +20,9 @@ int main(void)
 	boot_write_img_confirmed();
 	init_filesystem_layout();
 	connect_wifi();
+#if defined(CONFIG_WEBOS_SSH)
 	ssh_service_start();
+#endif
 	iwasm_init();
 	webos_http_init();
 

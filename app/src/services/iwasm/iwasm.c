@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,6 +8,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/multi_heap/shared_multi_heap.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/sys/printk.h>
 
 #include "wasm_export.h"
 
@@ -15,6 +17,19 @@
 LOG_MODULE_REGISTER(iwasm, LOG_LEVEL_INF);
 
 static bool runtime_ready;
+static const struct shell *active_shell;
+static K_MUTEX_DEFINE(exec_lock);
+
+int webos_iwasm_vprintf(const char *format, va_list ap)
+{
+	if (active_shell) {
+		shell_vfprintf(active_shell, SHELL_NORMAL, format, ap);
+		return 0;
+	}
+
+	vprintk(format, ap);
+	return 0;
+}
 
 struct mem_header {
 	void *raw;
@@ -100,7 +115,7 @@ int iwasm_init(void)
 	return 0;
 }
 
-static int iwasm_exec_file(const char *path)
+static int iwasm_exec_file(const struct shell *sh, const char *path)
 {
 	struct fs_file_t file;
 	ssize_t file_size;
@@ -169,12 +184,15 @@ static int iwasm_exec_file(const char *path)
 		goto cleanup_module;
 	}
 
+	active_shell = sh;
 	if (!wasm_application_execute_main(module_inst, 0, NULL)) {
 		const char *exc = wasm_runtime_get_exception(module_inst);
 
+		active_shell = NULL;
 		LOG_ERR("Execute failed: %s", exc ? exc : "unknown");
 		ret = -EIO;
 	} else {
+		active_shell = NULL;
 		LOG_INF("Executed %s successfully", path);
 		ret = 0;
 	}
@@ -194,7 +212,9 @@ static int cmd_iwasm_exec(const struct shell *sh, size_t argc, char **argv)
 		return -EINVAL;
 	}
 
-	int ret = iwasm_exec_file(argv[1]);
+	k_mutex_lock(&exec_lock, K_FOREVER);
+	int ret = iwasm_exec_file(sh, argv[1]);
+	k_mutex_unlock(&exec_lock);
 
 	if (ret != 0) {
 		shell_error(sh, "iwasm exec failed: %d", ret);
