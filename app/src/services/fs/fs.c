@@ -36,11 +36,18 @@ int ensure_dir(const char *path)
 
 int write_file(const char *path, const char *data)
 {
+	size_t len = strlen(data);
+
+	return write_file_bin(path, (const uint8_t *)data, len);
+}
+
+int write_file_bin(const char *path, const uint8_t *data, size_t data_len)
+{
 	struct fs_file_t file;
 	int ret;
 
 	if (!webos_path_allowed(path)) {
-		LOG_ERR("write_file: path not allowed: %s", path);
+		LOG_ERR("write_file_bin: path not allowed: %s", path);
 		return -EINVAL;
 	}
 
@@ -60,18 +67,19 @@ int write_file(const char *path, const char *data)
 	}
 
 	fs_file_t_init(&file);
-	ret = fs_open(&file, path, FS_O_CREATE | FS_O_TRUNC | FS_O_WRITE);
+	ret = fs_open(&file, path, FS_O_CREATE | FS_O_RDWR);
 	if (ret != 0) {
-		LOG_ERR("write_file: fs_open(%s) failed: %d", path, ret);
+		LOG_ERR("write_file_bin: fs_open(%s) failed: %d", path, ret);
 		return ret;
 	}
 
-	ret = fs_write(&file, data, strlen(data));
-	if (ret >= 0 && ret != strlen(data)) {
+	ret = fs_write(&file, data, data_len);
+	if (ret >= 0 && (size_t)ret != data_len) {
 		ret = -EIO;
 	}
 
 	int close_ret = fs_close(&file);
+
 	return ret < 0 ? ret : close_ret;
 }
 

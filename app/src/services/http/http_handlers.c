@@ -16,7 +16,7 @@
 #include "services/ota/ota.h"
 #include "utils/json/json.h"
 
-LOG_MODULE_REGISTER(webos_http_handlers, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(webos_http_handlers, LOG_LEVEL_DBG);
 
 static K_MUTEX_DEFINE(shell_lock);
 
@@ -119,102 +119,74 @@ static int pushbin_handler(struct http_client_ctx *client,
 	ARG_UNUSED(client);
 	ARG_UNUSED(user_data);
 	static char path[128];
-	static struct fs_file_t file;
-	static bool file_open;
+	static char body[WEBOS_HTTP_BODY_MAX];
+	static size_t cursor;
 	static char response[96];
 	int ret;
 
-	if (status == HTTP_SERVER_TRANSACTION_ABORTED) {
-		if (file_open) {
-			fs_close(&file);
-			file_open = false;
-		}
+	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
+	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
+		cursor = 0;
 		return 0;
 	}
 
-	if (status == HTTP_SERVER_TRANSACTION_COMPLETE) {
-		return 0;
-	}
-
-	if (!file_open && request_ctx->headers && request_ctx->header_count > 0) {
+	if (!path[0] && request_ctx->headers && request_ctx->header_count > 0) {
 		for (size_t i = 0; i < request_ctx->header_count; i++) {
 			if (request_ctx->headers[i].name == NULL) {
 				continue;
 			}
-			if (strcmp(request_ctx->headers[i].name, "X-Webos-Path") == 0 &&
+			if (strcmp(request_ctx->headers[i].name,
+				   "X-Webos-Path") == 0 &&
 			    request_ctx->headers[i].value != NULL) {
 				strncpy(path, request_ctx->headers[i].value,
 					sizeof(path) - 1);
 				path[sizeof(path) - 1] = '\0';
-
-				if (!webos_path_allowed(path)) {
-					ret = snprintk(response, sizeof(response),
-						       "{\"error\":\"path not allowed\"}\n");
-					set_json_response(response_ctx,
-							  HTTP_400_BAD_REQUEST, response,
-							  ret);
-					return 0;
-				}
-
-				{
-					char parent[128];
-					const char *slash = strrchr(path, '/');
-
-					if (slash != NULL && slash != path) {
-						size_t plen = slash - path;
-
-						if (plen < sizeof(parent)) {
-							memcpy(parent, path, plen);
-							parent[plen] = '\0';
-							ensure_dir(parent);
-						}
-					}
-				}
-
-				fs_file_t_init(&file);
-				ret = fs_open(&file, path,
-					      FS_O_CREATE | FS_O_TRUNC | FS_O_WRITE);
-				if (ret != 0) {
-					ret = snprintk(response, sizeof(response),
-						       "{\"error\":%d}\n", ret);
-					set_json_response(response_ctx,
-							  HTTP_500_INTERNAL_SERVER_ERROR,
-							  response, ret);
-					return 0;
-				}
-				file_open = true;
+				LOG_INF("pushbin: path='%s'", path);
 				break;
 			}
 		}
 	}
 
-	if (!file_open) {
+	if (!path[0]) {
 		ret = snprintk(response, sizeof(response),
 			       "{\"error\":\"missing X-Webos-Path header\"}\n");
-		set_json_response(response_ctx, HTTP_400_BAD_REQUEST, response, ret);
+		set_json_response(response_ctx, HTTP_400_BAD_REQUEST, response,
+				  ret);
 		return 0;
 	}
 
-	if (request_ctx->data_len > 0) {
-		ret = fs_write(&file, request_ctx->data, request_ctx->data_len);
-		if (ret < 0) {
-			fs_close(&file);
-			file_open = false;
-			ret = snprintk(response, sizeof(response),
-				       "{\"error\":%d}\n", ret);
-			set_json_response(response_ctx,
-					  HTTP_500_INTERNAL_SERVER_ERROR, response, ret);
-			return 0;
-		}
+	if (cursor + request_ctx->data_len >= sizeof(body)) {
+		cursor = 0;
+		path[0] = '\0';
+		ret = snprintk(response, sizeof(response),
+			       "{\"error\":\"request too large\"}\n");
+		set_json_response(response_ctx, HTTP_413_PAYLOAD_TOO_LARGE,
+				  response, ret);
+		return 0;
 	}
 
-	if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
-		fs_close(&file);
-		file_open = false;
+	memcpy(body + cursor, request_ctx->data, request_ctx->data_len);
+	cursor += request_ctx->data_len;
+
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	ret = write_file_bin(path, (const uint8_t *)body, cursor);
+	cursor = 0;
+
+	if (ret == 0) {
 		ret = snprintk(response, sizeof(response),
 			       "{\"ok\":true,\"path\":\"%s\"}\n", path);
 		set_json_response(response_ctx, HTTP_200_OK, response, ret);
+	} else {
+		LOG_ERR("pushbin: write_file_bin(%s) failed: %d", path, ret);
+		ret = snprintk(response, sizeof(response),
+			       "{\"error\":%d}\n", ret);
+		set_json_response(response_ctx, HTTP_500_INTERNAL_SERVER_ERROR,
+				  response, ret);
 	}
+	path[0] = '\0';
 
 	return 0;
 }
