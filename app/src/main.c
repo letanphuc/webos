@@ -6,6 +6,7 @@
 #include "services/fs/fs.h"
 #include "services/ota/ota.h"
 #include "services/http/http.h"
+#include "services/iwasm/iwasm.h"
 
 LOG_MODULE_REGISTER(webos, LOG_LEVEL_INF);
 
@@ -17,6 +18,7 @@ int main(void)
 	boot_write_img_confirmed();
 	init_filesystem_layout();
 	connect_wifi();
+	iwasm_init();
 	webos_http_init();
 
 	return 0;
