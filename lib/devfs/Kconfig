@@ -1,0 +1,11 @@
+# Copyright (c) 2024
+# SPDX-License-Identifier: Apache-2.0
+
+config WEBOS_DEVFS
+	bool "WebOS devfs (/dev) virtual filesystem"
+	select FILE_SYSTEM
+	help
+	  Mount a virtual /dev filesystem that exposes GPIO and LED
+	  peripherals as files.  WASM payloads access:
+	    /dev/gpio/<pin>/value      "0" or "1"
+	    /dev/gpio/<pin>/direction  "in" or "out"

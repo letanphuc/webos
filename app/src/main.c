@@ -6,6 +6,9 @@
 #include "services/ota/ota.h"
 #include "services/http/http.h"
 #include "services/iwasm/iwasm.h"
+#if defined(CONFIG_WEBOS_DEVFS)
+#include "devfs.h"
+#endif
 #if defined(CONFIG_WEBOS_SSH)
 #include "services/ssh/ssh.h"
 #endif
@@ -20,6 +23,9 @@ int main(void)
 	boot_write_img_confirmed();
 	init_filesystem_layout();
 	connect_wifi();
+#if defined(CONFIG_WEBOS_DEVFS)
+	devfs_register();
+#endif
 #if defined(CONFIG_WEBOS_SSH)
 	ssh_service_start();
 #endif

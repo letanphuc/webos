@@ -7,7 +7,7 @@
 #include <zephyr/net/http/server.h>
 
 #define WEBOS_HTTP_PORT      8080
-#define WEBOS_HTTP_BODY_MAX  2048
+#define WEBOS_HTTP_BODY_MAX  4096
 #define WEBOS_JSON_VALUE_MAX 1536
 
 extern uint16_t webos_http_port;

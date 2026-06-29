@@ -126,14 +126,8 @@ static int pushbin_handler(struct http_client_ctx *client,
 	static char response[96];
 	int ret;
 
-	LOG_INF("pushbin: status=%d data_len=%zu cursor=%zu path='%s' headers=%zu header_status=%d",
-		status, request_ctx->data_len, cursor, path,
-		request_ctx->header_count, request_ctx->headers_status);
-
 	if (status == HTTP_SERVER_TRANSACTION_ABORTED ||
 	    status == HTTP_SERVER_TRANSACTION_COMPLETE) {
-		LOG_INF("pushbin: transaction ended status=%d cursor=%zu path='%s'",
-			status, cursor, path);
 		cursor = 0;
 		path[0] = '\0';
 		return 0;
@@ -141,45 +135,36 @@ static int pushbin_handler(struct http_client_ctx *client,
 
 	if (!path[0] && request_ctx->headers && request_ctx->header_count > 0) {
 		for (size_t i = 0; i < request_ctx->header_count; i++) {
-			const struct http_header *header = &request_ctx->headers[i];
+			const struct http_header *header =
+				&request_ctx->headers[i];
 
-			LOG_INF("pushbin: captured header[%zu] name='%s' value='%s'",
-				i, header->name ? header->name : "(null)",
-				header->value ? header->value : "(null)");
 			if (header->name == NULL) {
 				continue;
 			}
 			if (strcmp(header->name, "X-Webos-Path") == 0 &&
 			    header->value != NULL) {
-				strncpy(path, header->value, sizeof(path) - 1);
+				strncpy(path, header->value,
+					sizeof(path) - 1);
 				path[sizeof(path) - 1] = '\0';
-				LOG_INF("pushbin: path='%s'", path);
 				break;
 			}
 		}
 	}
 
-	if (!path[0]) {
-		LOG_INF("pushbin: waiting for in-band path prefix; header_count=%zu header_status=%d",
-			request_ctx->header_count, request_ctx->headers_status);
-	}
-
 	if (cursor + request_ctx->data_len >= sizeof(body)) {
-		LOG_ERR("pushbin: request too large cursor=%zu data_len=%zu max=%zu path='%s'",
-			cursor, request_ctx->data_len, sizeof(body), path);
+		LOG_ERR("pushbin: request too large");
 		cursor = 0;
 		path[0] = '\0';
-		ret = snprintk(response, sizeof(response),
-			       "{\"error\":\"request too large\"}\n");
 		set_json_response(response_ctx, HTTP_413_PAYLOAD_TOO_LARGE,
-				  response, ret);
+				  "{\"error\":\"too large\"}\n", 20);
 		return 0;
 	}
 
-	memcpy(body + cursor, request_ctx->data, request_ctx->data_len);
-	cursor += request_ctx->data_len;
-	LOG_INF("pushbin: buffered=%zu final=%d path='%s'",
-		cursor, status == HTTP_SERVER_REQUEST_DATA_FINAL, path);
+	if (request_ctx->data_len > 0) {
+		memcpy(body + cursor, request_ctx->data,
+		       request_ctx->data_len);
+		cursor += request_ctx->data_len;
+	}
 
 	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
 		return 0;
@@ -187,53 +172,37 @@ static int pushbin_handler(struct http_client_ctx *client,
 
 	if (!path[0]) {
 		char *newline = memchr(body, '\n', cursor);
-		size_t path_len;
-
-		if (newline == NULL) {
-			LOG_ERR("pushbin: missing path prefix/header; bytes=%zu header_count=%zu header_status=%d",
-				cursor, request_ctx->header_count, request_ctx->headers_status);
-			ret = snprintk(response, sizeof(response),
-				       "{\"error\":\"missing path\"}\n");
-			set_json_response(response_ctx, HTTP_400_BAD_REQUEST, response, ret);
+		if (!newline) {
 			cursor = 0;
+			set_json_response(response_ctx, HTTP_400_BAD_REQUEST,
+					  "{\"error\":\"no path\"}\n", 19);
 			return 0;
 		}
-
-		path_len = newline - body;
-		if (path_len == 0 || path_len >= sizeof(path)) {
-			LOG_ERR("pushbin: invalid path prefix length=%zu", path_len);
-			ret = snprintk(response, sizeof(response),
-				       "{\"error\":\"invalid path\"}\n");
-			set_json_response(response_ctx, HTTP_400_BAD_REQUEST, response, ret);
+		size_t path_len = newline - body;
+		if (path_len >= sizeof(path)) {
 			cursor = 0;
+			set_json_response(response_ctx, HTTP_400_BAD_REQUEST,
+					  "{\"error\":\"bad path\"}\n", 19);
 			return 0;
 		}
-
 		memcpy(path, body, path_len);
 		path[path_len] = '\0';
 		memmove(body, newline + 1, cursor - path_len - 1);
 		cursor -= path_len + 1;
-		LOG_INF("pushbin: path prefix='%s' payload=%zu", path, cursor);
 	}
 
-	LOG_INF("pushbin: writing %zu bytes to '%s'", cursor, path);
 	ret = write_file_bin(path, (const uint8_t *)body, cursor);
 	cursor = 0;
 
 	if (ret == 0) {
-		LOG_INF("pushbin: write ok path='%s'", path);
 		ret = snprintk(response, sizeof(response),
 			       "{\"ok\":true,\"path\":\"%s\"}\n", path);
 		set_json_response(response_ctx, HTTP_200_OK, response, ret);
 	} else {
-		LOG_ERR("pushbin: write_file_bin(%s) failed: %d", path, ret);
-		ret = snprintk(response, sizeof(response),
-			       "{\"error\":%d}\n", ret);
 		set_json_response(response_ctx, HTTP_500_INTERNAL_SERVER_ERROR,
-				  response, ret);
+				  "{\"error\":\"write failed\"}\n", 23);
 	}
 	path[0] = '\0';
-
 	return 0;
 }
 
