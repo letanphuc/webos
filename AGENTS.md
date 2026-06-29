@@ -22,6 +22,13 @@
 - Run application Twister builds after `source .env` with `twister_app`.
 - Run library tests with `west twister -T webos/tests -v --inline-logs --integration` from the workspace root.
 
+## Coding Style
+
+- C/C++ source formatting is defined by `webos/.clang-format` using Google style with `ColumnLimit: 120`.
+- After `source .env` from the workspace root, run `formatcode` to format all C/C++ source and header files under `webos/`.
+- Always run `formatcode` before committing code changes. If formatting changes files, include those formatted files in the same commit as the code change.
+- `formatcode` is defined in `webos/app/.env`; keep `/Users/phuc/Work/webos/.env` and `webos/app/.env` aligned if helper behavior changes.
+
 ## Current Zephyr Wiring
 
 - `zephyr/module.yml` makes this repository a Zephyr module and sets `board_root: .` and `dts_root: .`; custom boards and DTS bindings under this repo are visible to Zephyr builds.
@@ -66,11 +73,6 @@ lib/
 │   ├── Kconfig                         # CONFIG_WEBOS_DEVFS
 │   ├── devfs.h                         # devfs_register_file() / devfs_unregister_file()
 │   └── devfs.c                         # Zephyr VFS backend and registered-file dispatcher
-└── webos_gpio/                         # webos,gpio wrapper that registers /dev/gpio files
-    ├── CMakeLists.txt
-    ├── Kconfig                         # CONFIG_WEBOS_GPIO
-    ├── webos_gpio.h
-    └── webos_gpio.c
 ```
 
 Sample WASM payloads live under `sampleapps/`:
@@ -103,7 +105,7 @@ sampleapps/
 - `app/sections-rom.ld` provides the iterable ROM section that binds `HTTP_RESOURCE_DEFINE` entries from `http_handlers.c` to the `HTTP_SERVICE_DEFINE` in `http.c`.
 - `app/app.overlay` defines the fstab entry (`zephyr,fstab,fatfs`, automount, disk-access) and the flash disk (`zephyr,flash-disk`) backed by `&storage_partition`.
 - `lib/devfs/` — generic Zephyr VFS backend registered with `fs_register()` and mounted at `/dev`. It owns path dispatch, file open/read/write/close forwarding, and directory enumeration for registered nodes. It does not know about GPIO or any concrete device class. Device wrappers register files with `devfs_register_file()`; enable with `CONFIG_WEBOS_DEVFS=y`; requires `CONFIG_FILE_SYSTEM_MAX_TYPES=3`.
-- `lib/webos_gpio/` — `webos,gpio` devicetree wrapper around Zephyr GPIO. Each enabled `webos,gpio` node maps to a Zephyr GPIO spec and registers `/dev/gpio/<pin>/value` (rw `"0"`/`"1"`) plus `/dev/gpio/<pin>/direction` (rw `"out"`/`"in"`) through devfs. Enable with `CONFIG_WEBOS_GPIO=y`; the default app overlay maps the first WebOS GPIO to Zephyr `gpio0` pin `2`.
+- `drivers/webos_gpio/` — `webos,gpio` devicetree wrapper around Zephyr GPIO. Each enabled `webos,gpio` node maps to a Zephyr GPIO spec and registers `/dev/gpio/<pin>/value` (rw `"0"`/`"1"`) plus `/dev/gpio/<pin>/direction` (rw `"out"`/`"in"`) through devfs. Enable with `CONFIG_WEBOS_GPIO=y`; the default app overlay maps the first WebOS GPIO to Zephyr `gpio0` pin `2`.
 
 ## CI And Docs
 

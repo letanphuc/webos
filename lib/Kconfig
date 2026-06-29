@@ -5,6 +5,5 @@ menu "Custom libraries"
 
 rsource "custom/Kconfig"
 rsource "devfs/Kconfig"
-rsource "webos_gpio/Kconfig"
 
 endmenu
