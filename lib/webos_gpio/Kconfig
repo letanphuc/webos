@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config WEBOS_GPIO
+	bool "WebOS GPIO devfs wrapper"
+	depends on WEBOS_DEVFS
+	depends on GPIO
+	help
+	  Register webos,gpio devicetree nodes as /dev/gpio/<n> files.

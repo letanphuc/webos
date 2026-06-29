@@ -2,3 +2,4 @@
 
 add_subdirectory_ifdef(CONFIG_CUSTOM custom)
 add_subdirectory_ifdef(CONFIG_WEBOS_DEVFS devfs)
+add_subdirectory_ifdef(CONFIG_WEBOS_GPIO webos_gpio)

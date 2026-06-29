@@ -5,7 +5,20 @@ config WEBOS_DEVFS
 	bool "WebOS devfs (/dev) virtual filesystem"
 	select FILE_SYSTEM
 	help
-	  Mount a virtual /dev filesystem that exposes GPIO and LED
-	  peripherals as files.  WASM payloads access:
-	    /dev/gpio/<pin>/value      "0" or "1"
-	    /dev/gpio/<pin>/direction  "in" or "out"
+	  Mount a virtual /dev filesystem. Device wrappers register files
+	  under this filesystem.
+
+config WEBOS_DEVFS_MAX_FILES
+	int "Maximum devfs files"
+	default 32
+	depends on WEBOS_DEVFS
+
+config WEBOS_DEVFS_MAX_DIRS
+	int "Maximum devfs directories per listing"
+	default 16
+	depends on WEBOS_DEVFS
+
+config WEBOS_DEVFS_MAX_PATH_LEN
+	int "Maximum devfs path length"
+	default 64
+	depends on WEBOS_DEVFS

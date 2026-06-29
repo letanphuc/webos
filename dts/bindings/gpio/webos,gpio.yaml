@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: WebOS GPIO device exported through devfs
+
+compatible: "webos,gpio"
+
+include: base.yaml
+
+properties:
+  gpios:
+    type: phandle-array
+    required: true
+    description: Zephyr GPIO referenced by this WebOS GPIO device.

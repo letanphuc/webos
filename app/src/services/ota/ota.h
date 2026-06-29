@@ -9,8 +9,8 @@
 
 void ota_init(void);
 int ota_begin(void);
-int ota_write(const uint8_t *data, size_t len, bool final);
-int ota_finish(size_t *written);
+int ota_write(const uint8_t* data, size_t len, bool final);
+int ota_finish(size_t* written);
 void ota_abort(void);
 
 #endif

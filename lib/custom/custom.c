@@ -6,7 +6,4 @@
 
 #include <app/lib/custom.h>
 
-int custom_get_value(int val)
-{
-	return (val != 0) ? val : CONFIG_CUSTOM_GET_VALUE_DEFAULT;
-}
+int custom_get_value(int val) { return (val != 0) ? val : CONFIG_CUSTOM_GET_VALUE_DEFAULT; }
