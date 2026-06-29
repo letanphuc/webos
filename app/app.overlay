@@ -23,4 +23,11 @@
 		compatible = "webos,gpio";
 		gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
 	};
+
+	web_rgbled48: web_rgbled48 {
+		compatible = "webos,rgbled";
+		gpios = <&gpio1 16 GPIO_ACTIVE_HIGH>;
+		webos-pin = <48>;
+		chain-length = <1>;
+	};
 };

@@ -12,6 +12,9 @@
 #if defined(CONFIG_WEBOS_GPIO)
 #include "webos_gpio.h"
 #endif
+#if defined(CONFIG_WEBOS_RGBLED)
+#include "webos_rgbled.h"
+#endif
 #if defined(CONFIG_WEBOS_SSH)
 #include "services/ssh/ssh.h"
 #endif
@@ -30,6 +33,9 @@ int main(void) {
 #endif
 #if defined(CONFIG_WEBOS_GPIO)
   webos_gpio_register_devfs();
+#endif
+#if defined(CONFIG_WEBOS_RGBLED)
+  webos_rgbled_register_devfs();
 #endif
 #if defined(CONFIG_WEBOS_SSH)
   ssh_service_start();

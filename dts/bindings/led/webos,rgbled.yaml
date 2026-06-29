@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: WebOS WS2812-compatible RGB LED exported through devfs
+
+compatible: "webos,rgbled"
+
+include: base.yaml
+
+properties:
+  gpios:
+    type: phandle-array
+    required: true
+    description: GPIO connected to the WS2812 data input.
+
+  chain-length:
+    type: int
+    default: 1
+    description: Number of LEDs in the chain. WebOS currently drives the first LED.
+
+  webos-pin:
+    type: int
+    description: Logical GPIO pin number used in the /dev/rgbled/<n>/color path.
