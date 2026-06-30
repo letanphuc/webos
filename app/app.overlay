@@ -3,6 +3,34 @@
 #include <zephyr/dt-bindings/led/worldsemi_ws2812c.h>
 
 / {
+  chosen {
+    mcuboot,image-ram = &psram_exec;
+    zephyr,bootloader-info = &bootloader_info;
+  };
+
+  psram_exec: psram_exec@42000000 {
+    compatible = "zephyr,memory-region", "mmio-sram";
+    reg = <0x42000000 0x600000>;
+    zephyr,memory-region = "WEBOS_PSRAM_EXEC";
+  };
+
+  bootloader_info_mem: bootloader_info_mem@3fcff000 {
+    compatible = "zephyr,memory-region", "mmio-sram";
+    reg = <0x3fcff000 0x100>;
+    zephyr,memory-region = "WEBOS_BOOTLOADER_INFO";
+
+    bootloader_info_retained: retainedmem {
+      compatible = "zephyr,retained-ram";
+      #address-cells = <1>;
+      #size-cells = <1>;
+
+      bootloader_info: retention@0 {
+        compatible = "zephyr,retention";
+        reg = <0x0 0x100>;
+      };
+    };
+  };
+
   fstab {
     compatible = "zephyr,fstab";
 
