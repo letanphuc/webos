@@ -112,6 +112,10 @@ sampleapps/
 - GitHub Actions are still upstream example workflows. Build CI uses `arm-zephyr-eabi`, so it does not yet verify ESP32-S3/Xtensa builds.
 - Docs CI builds `doc/` with Doxygen and Sphinx; this is separate from `docs/idea.md`.
 
+## Known Bugs
+
+- RGB LED control is not physically working as expected. The `webos,rgbled` devfs wrapper and host command path can write/read `/dev/rgbled/48/color`, and `led_strip_update_rgb()` returns success, but the onboard RGB LED remains on or shows the wrong color. Tested approaches included custom GPIO bit-banging, Zephyr `worldsemi,ws2812-spi` on `spi2`/`spi3`, GPIO48 as `SPIM3_MOSI_GPIO48`, 7 MHz 8-bit WS2812C frames, 2.4 MHz 3-bit WS2812 frames, and `reset-delay = <300>`. Treat this as unresolved pin-routing/timing/hardware mapping work; do not assume GPIO48 + SPI currently drives the physical LED correctly. Next likely test is the vendor/example data pin GPIO14 or checking the board schematic/logic analyzer trace.
+
 ## WebOS MVP Constraints
 
 - MVP target is ESP32-S3 with PSRAM.

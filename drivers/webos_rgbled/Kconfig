@@ -1,28 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config WEBOS_RGBLED
-	bool "WebOS WS2812 RGB LED devfs wrapper"
+	bool "WebOS RGB LED strip devfs wrapper"
 	depends on WEBOS_DEVFS
-	depends on GPIO
+	depends on LED_STRIP
 	help
 	  Register webos,rgbled devicetree nodes as /dev/rgbled/<n>/color files.
 
-config WEBOS_RGBLED_T0H_NS
-	int "WS2812 zero-bit high time in ns"
+config WEBOS_RGBLED_MAX_PIXELS
+	int "Maximum pixels updated by each WebOS RGB LED node"
 	depends on WEBOS_RGBLED
-	default 350
-
-config WEBOS_RGBLED_T1H_NS
-	int "WS2812 one-bit high time in ns"
-	depends on WEBOS_RGBLED
-	default 700
-
-config WEBOS_RGBLED_BIT_NS
-	int "WS2812 bit cell time in ns"
-	depends on WEBOS_RGBLED
-	default 1250
-
-config WEBOS_RGBLED_RESET_US
-	int "WS2812 reset low time in us"
-	depends on WEBOS_RGBLED
-	default 80
+	default 8
+	help
+	  Upper bound for stack pixel buffers used when mirroring one color across
+	  the referenced Zephyr LED strip.

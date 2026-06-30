@@ -6,10 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/led_strip.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/sys_clock.h>
 
 #include "devfs.h"
 
@@ -17,12 +16,11 @@ LOG_MODULE_REGISTER(webos_rgbled, LOG_LEVEL_DBG);
 
 #define DT_DRV_COMPAT webos_rgbled
 
-#define NS_TO_CYCLES(ns) ((uint32_t)(((uint64_t)sys_clock_hw_cycles_per_sec() * (ns) + 999999999ULL) / 1000000000ULL))
-
 struct webos_rgbled_dev {
-  struct gpio_dt_spec spec;
+  const struct device* strip;
   const char* name;
   uint32_t webos_pin;
+  uint32_t chain_length;
   char path[CONFIG_WEBOS_DEVFS_MAX_PATH_LEN];
   uint8_t red;
   uint8_t green;
@@ -34,45 +32,30 @@ struct webos_rgbled_open_file {
   bool read_eof;
 };
 
-static void wait_until_cycle(uint32_t target) {
-  while ((int32_t)(target - k_cycle_get_32()) > 0) {
-  }
-}
-
-static void webos_rgbled_write_bit(struct webos_rgbled_dev* led, bool bit) {
-  const uint32_t t_high = bit ? NS_TO_CYCLES(CONFIG_WEBOS_RGBLED_T1H_NS) : NS_TO_CYCLES(CONFIG_WEBOS_RGBLED_T0H_NS);
-  const uint32_t t_bit = NS_TO_CYCLES(CONFIG_WEBOS_RGBLED_BIT_NS);
-  const uint32_t start = k_cycle_get_32();
-
-  gpio_pin_set_dt(&led->spec, 1);
-  wait_until_cycle(start + t_high);
-  gpio_pin_set_dt(&led->spec, 0);
-  wait_until_cycle(start + t_bit);
-}
-
 static int webos_rgbled_show(struct webos_rgbled_dev* led) {
-  const uint8_t grb[] = {led->green, led->red, led->blue};
-  unsigned int key;
+  struct led_rgb pixels[CONFIG_WEBOS_RGBLED_MAX_PIXELS];
+  size_t count = led->chain_length;
   int ret;
 
-  LOG_DBG("show /dev/rgbled/%u/color rgb=%u,%u,%u via %s pin %u", led->webos_pin, led->red, led->green, led->blue,
-          led->spec.port->name, led->spec.pin);
+  if (count > ARRAY_SIZE(pixels)) {
+    count = ARRAY_SIZE(pixels);
+  }
 
-  ret = gpio_pin_configure_dt(&led->spec, GPIO_OUTPUT_INACTIVE);
+  for (size_t i = 0; i < count; i++) {
+    pixels[i].r = led->red;
+    pixels[i].g = led->green;
+    pixels[i].b = led->blue;
+  }
+
+  LOG_DBG("show /dev/rgbled/%u/color rgb=%u,%u,%u via %s pixels=%zu", led->webos_pin, led->red, led->green, led->blue,
+          led->strip->name, count);
+
+  ret = led_strip_update_rgb(led->strip, pixels, count);
   if (ret < 0) {
-    LOG_ERR("configure %s pin %u failed: %d", led->spec.port->name, led->spec.pin, ret);
+    LOG_ERR("update %s failed: %d", led->strip->name, ret);
     return ret;
   }
 
-  key = irq_lock();
-  for (size_t i = 0; i < ARRAY_SIZE(grb); i++) {
-    for (int bit = 7; bit >= 0; bit--) {
-      webos_rgbled_write_bit(led, (grb[i] & BIT(bit)) != 0);
-    }
-  }
-  irq_unlock(key);
-
-  k_busy_wait(CONFIG_WEBOS_RGBLED_RESET_US);
   LOG_DBG("show complete /dev/rgbled/%u/color", led->webos_pin);
   return 0;
 }
@@ -171,6 +154,12 @@ static int parse_color(char* buf, uint8_t* red, uint8_t* green, uint8_t* blue) {
     *blue = 255;
     return 0;
   }
+  if (strcmp(buf, "white") == 0) {
+    *red = 255;
+    *green = 255;
+    *blue = 255;
+    return 0;
+  }
 
   if (buf[0] == '#' || strlen(buf) == 6) {
     return parse_hex_color(buf, red, green, blue);
@@ -186,8 +175,8 @@ static int webos_rgbled_open(struct devfs_file* file, void* user_data, int flags
 
   LOG_DBG("open /dev/rgbled/%u/color flags=0x%x", led->webos_pin, flags);
 
-  if (!gpio_is_ready_dt(&led->spec)) {
-    LOG_ERR("GPIO device %s is not ready", led->spec.port->name);
+  if (!device_is_ready(led->strip)) {
+    LOG_ERR("LED strip device %s is not ready", led->strip->name);
     return -ENODEV;
   }
 
@@ -239,6 +228,34 @@ static ssize_t webos_rgbled_write(struct devfs_file* file, const void* src, size
     return -EIO;
   }
 
+  if (nbytes == 1 && *((const uint8_t*)src) == 0) {
+    led->red = 0;
+    led->green = 0;
+    led->blue = 0;
+    LOG_DBG("write /dev/rgbled/%u/color raw off", led->webos_pin);
+
+    ret = webos_rgbled_show(led);
+    if (ret < 0) {
+      return ret;
+    }
+    return (ssize_t)nbytes;
+  }
+
+  if (nbytes == 3) {
+    const uint8_t* rgb = src;
+
+    led->red = rgb[0];
+    led->green = rgb[1];
+    led->blue = rgb[2];
+    LOG_DBG("write /dev/rgbled/%u/color raw rgb=%u,%u,%u", led->webos_pin, led->red, led->green, led->blue);
+
+    ret = webos_rgbled_show(led);
+    if (ret < 0) {
+      return ret;
+    }
+    return (ssize_t)nbytes;
+  }
+
   copy_len = (nbytes < sizeof(buf) - 1) ? nbytes : sizeof(buf) - 1;
   memcpy(buf, src, copy_len);
   buf[copy_len] = '\0';
@@ -281,11 +298,12 @@ static const struct devfs_file_ops webos_rgbled_ops = {
     .close = webos_rgbled_close,
 };
 
-#define WEBOS_RGBLED_INIT(inst)                                                     \
-  {                                                                                 \
-      .spec = GPIO_DT_SPEC_INST_GET(inst, gpios),                                   \
-      .name = DT_NODE_FULL_NAME(DT_DRV_INST(inst)),                                 \
-      .webos_pin = DT_INST_PROP_OR(inst, webos_pin, DT_INST_GPIO_PIN(inst, gpios)), \
+#define WEBOS_RGBLED_INIT(inst)                                          \
+  {                                                                      \
+      .strip = DEVICE_DT_GET(DT_INST_PHANDLE(inst, led)),                \
+      .name = DT_NODE_FULL_NAME(DT_DRV_INST(inst)),                      \
+      .webos_pin = DT_INST_PROP(inst, webos_pin),                        \
+      .chain_length = DT_PROP(DT_INST_PHANDLE(inst, led), chain_length), \
   }
 
 static struct webos_rgbled_dev webos_rgbleds[] = {DT_INST_FOREACH_STATUS_OKAY(WEBOS_RGBLED_INIT)};
@@ -298,8 +316,8 @@ int webos_rgbled_register_devfs(void) {
 
     snprintk(led->path, sizeof(led->path), "/rgbled/%u/color", led->webos_pin);
 
-    LOG_DBG("registering %s for %s pin %u logical pin %u", led->path, led->spec.port->name, led->spec.pin,
-            led->webos_pin);
+    LOG_DBG("registering %s for %s logical pin %u chain length %u", led->path, led->strip->name, led->webos_pin,
+            led->chain_length);
 
     ret = devfs_register_file(led->path, &webos_rgbled_ops, led);
     if (ret != 0) {

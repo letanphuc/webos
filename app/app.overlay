@@ -1,33 +1,52 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/led/led.h>
+#include <zephyr/dt-bindings/led/worldsemi_ws2812c.h>
 
 / {
-	fstab {
-		compatible = "zephyr,fstab";
+  fstab {
+    compatible = "zephyr,fstab";
 
-		storage_fatfs: storage_fatfs {
-			compatible = "zephyr,fstab,fatfs";
-			automount;
-			disk-access;
-			mount-point = "/STORAGE:";
-		};
-	};
+    storage_fatfs: storage_fatfs {
+      compatible = "zephyr,fstab,fatfs";
+      automount;
+      disk-access;
+      mount-point = "/STORAGE:";
+    };
+  };
 
-	flash_disk0 {
-		compatible = "zephyr,flash-disk";
-		partition = <&storage_partition>;
-		disk-name = "STORAGE";
-		cache-size = <4096>;
-	};
+  flash_disk0 {
+    compatible = "zephyr,flash-disk";
+    partition = <&storage_partition>;
+    disk-name = "STORAGE";
+    cache-size = <4096>;
+  };
 
-	web_gpio2: web_gpio2 {
-		compatible = "webos,gpio";
-		gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
-	};
+  web_gpio2: web_gpio2 {
+    compatible = "webos,gpio";
+    gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+  };
 
-	web_rgbled48: web_rgbled48 {
-		compatible = "webos,rgbled";
-		gpios = <&gpio1 16 GPIO_ACTIVE_HIGH>;
-		webos-pin = <48>;
-		chain-length = <1>;
-	};
+  web_rgbled48: web_rgbled48 {
+    compatible = "webos,rgbled";
+    status = "disabled";
+    led = <&led_strip>;
+    webos-pin = <48>;
+  };
+};
+
+&spi3 {
+  pinctrl-0 = <&spim3_rgbled>;
+
+  led_strip: led_strip@0 {
+    status = "disabled";
+    compatible = "worldsemi,ws2812-spi";
+    reg = <0>;
+    spi-max-frequency = <2400000>;
+    bits-per-symbol = <3>;
+    spi-one-frame = <0x6>;
+    spi-zero-frame = <0x4>;
+    reset-delay = <300>;
+    chain-length = <1>;
+    color-mapping = <LED_COLOR_ID_GREEN LED_COLOR_ID_RED LED_COLOR_ID_BLUE>;
+  };
 };

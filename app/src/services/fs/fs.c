@@ -9,7 +9,9 @@
 LOG_MODULE_REGISTER(webos_fs, LOG_LEVEL_INF);
 
 bool webos_path_allowed(const char* path) {
-  return strncmp(path, WEBOS_MOUNT_POINT "/", strlen(WEBOS_MOUNT_POINT "/")) == 0 && strstr(path, "..") == NULL;
+  return (strncmp(path, WEBOS_MOUNT_POINT "/", strlen(WEBOS_MOUNT_POINT "/")) == 0 ||
+          strncmp(path, "/dev/", strlen("/dev/")) == 0) &&
+         strstr(path, "..") == NULL;
 }
 
 int ensure_dir(const char* path) {
@@ -87,10 +89,12 @@ int write_file_bin(const char* path, const uint8_t* data, size_t data_len) {
     return -EINVAL;
   }
 
-  ret = ensure_parent_dirs(path);
-  if (ret != 0) {
-    LOG_ERR("write_file_bin: ensure_parent_dirs(%s) failed: %d", path, ret);
-    return ret;
+  if (strncmp(path, "/dev/", strlen("/dev/")) != 0) {
+    ret = ensure_parent_dirs(path);
+    if (ret != 0) {
+      LOG_ERR("write_file_bin: ensure_parent_dirs(%s) failed: %d", path, ret);
+      return ret;
+    }
   }
 
   fs_file_t_init(&file);
