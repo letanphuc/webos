@@ -12,9 +12,10 @@
 - From the west workspace root `/Users/phuc/Work/webos`: `west init -l webos` then `west update`.
 - Use the workspace-root env first: `cd /Users/phuc/Work/webos && source .env`. It activates `/Users/phuc/Work/zephyr/.venv`, sets `WEBOS_APP_DIR=/Users/phuc/Work/webos/webos/app`, sets `WEBOS_BUILD_DIR=/Users/phuc/Work/webos/build`, and loads `webos/app/.env`.
 - The manifest allowlist currently pulls only `zephyr`, `hal_espressif`, `mbedtls`, and `mcuboot`; add modules in `west.yml` before using other Zephyr subsystems that require external modules.
-- The target board is `esp32s3_devkitc/esp32s3/procpu` (was `esp32s3_devkitm`; Zephyr maps the deprecated name automatically).
+- The target board is the app-provided `webos_esp32s3/esp32s3/procpu`.
 - After `source .env`, use `build`, `rebuild`, `flash`, `run`, `monitor`, `menuconfig`, `clean`, and `twister_app` from the workspace root.
-- `run` builds and flashes. `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud.
+- `run` builds and flashes. `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud. The flash helper uses `WEBOS_BAUD=460800`.
+- For bounded serial captures, use `gtimeout 10s script -q /dev/null bash -c 'source .env && monitor'` from the workspace root.
 - For device-side HTTP, shell, file push, log, OTA, and WASM smoke tests, use `webdb` from the workspace root after `source .env`, e.g. `tools/webdb/target/debug/webdb shell fs ls /dev` or `tools/webdb/target/debug/webdb shell iwasm exec /STORAGE:/apps/blink2.wasm 2`.
 - Avoid raw `curl` and custom Python snippets for device HTTP/shell testing; use `tools/webdb/target/debug/webdb ...` so host/device interactions follow the repo-supported path.
 - WiFi credentials live in `app/wifi.conf` (gitignored). `build` and `rebuild` load it via `EXTRA_CONF_FILE`. Override with `WEBOS_WIFI_SSID`/`WEBOS_WIFI_PSK` env vars.
@@ -34,6 +35,12 @@
 - `zephyr/module.yml` makes this repository a Zephyr module and sets `board_root: .` and `dts_root: .`; custom boards and DTS bindings under this repo are visible to Zephyr builds.
 - Root `CMakeLists.txt` is the module entry point. It adds `drivers/` and `lib/`, not the application entry point.
 - `/Users/phuc/Work/webos/.env` is outside this git repo but is part of the local workspace contract; keep it aligned with `app/.env` if helper behavior changes.
+- Sysbuild enables MCUboot RAM-load for the app: `app/sysbuild.conf` sets `SB_CONFIG_MCUBOOT_MODE_RAM_LOAD=y` and `SB_CONFIG_MCUBOOT_RAMLOAD_ALLOW_XIP=y`.
+- The app and MCUboot overlays both define `mcuboot,image-ram = &psram_exec` at `0x42000000` with a 6 MB window, plus a retained `zephyr,bootloader-info` region at `0x3fcff000`.
+- MCUboot for this workspace requires local changes in the west-managed `zephyr/` and `bootloader/mcuboot/` repositories:
+  - `zephyr` commit `aaa5e9b5ed4` (`esp32s3: support MCUboot PSRAM RAM load`) initializes octal PSRAM in MCUboot, provides MCUboot PSRAM linker symbols, redirects ESP32-S3 PSRAM flash reads through an internal bounce buffer, and uses `esp_flash_read()` after PSRAM/MSPI init.
+  - `bootloader/mcuboot` commit `9efb22a8` (`boot: support ESP32-S3 PSRAM RAM-load handoff`) validates RAM-loaded images from the PSRAM DROM alias, reads TLVs from flash in RAM-load mode, and stages the ESP image from PSRAM before copying final IRAM/DRAM/IROM/DROM segments and jumping to the ESP load-header entry.
+- Verified RAM-load boot path: MCUboot initializes PSRAM, copies the signed image from slot 0 to PSRAM, validates the SHA256 TLV, stages/copies ESP segments, jumps to `__start`, and WebOS boots with filesystem, Wi-Fi, devfs, iwasm, and HTTP server startup.
 
 ## Application Source Layout
 
@@ -104,6 +111,7 @@ sampleapps/
 - `app/CMakeLists.txt` lists every `.c` file and adds `target_include_directories(app PRIVATE src)` so that `#include "hal/wifi/wifi.h"`-style paths work from any source file.
 - `app/sections-rom.ld` provides the iterable ROM section that binds `HTTP_RESOURCE_DEFINE` entries from `http_handlers.c` to the `HTTP_SERVICE_DEFINE` in `http.c`.
 - `app/app.overlay` defines the fstab entry (`zephyr,fstab,fatfs`, automount, disk-access) and the flash disk (`zephyr,flash-disk`) backed by `&storage_partition`.
+- `app/app.overlay` also defines the PSRAM RAM-load execution window (`psram_exec@42000000`) and retained MCUboot bootloader-info region (`bootloader_info_mem@3fcff000`). Keep these aligned with `bootloader/mcuboot/boot/zephyr/app.overlay`.
 - `lib/devfs/` — generic Zephyr VFS backend registered with `fs_register()` and mounted at `/dev`. It owns path dispatch, file open/read/write/close forwarding, and directory enumeration for registered nodes. It does not know about GPIO or any concrete device class. Device wrappers register files with `devfs_register_file()`; enable with `CONFIG_WEBOS_DEVFS=y`; requires `CONFIG_FILE_SYSTEM_MAX_TYPES=3`.
 - `drivers/webos_gpio/` — `webos,gpio` devicetree wrapper around Zephyr GPIO. Each enabled `webos,gpio` node maps to a Zephyr GPIO spec and registers `/dev/gpio/<pin>/value` (rw `"0"`/`"1"`) plus `/dev/gpio/<pin>/direction` (rw `"out"`/`"in"`) through devfs. Enable with `CONFIG_WEBOS_GPIO=y`; the default app overlay maps the first WebOS GPIO to Zephyr `gpio0` pin `2`.
 
@@ -124,4 +132,4 @@ sampleapps/
 - First payload is `/apps/blink.wasm`; native ABI provides `gpio_set`, `gpio_get`, `sleep_ms`, `log_print`, `dev_fs_write`, `dev_fs_read`. Payloads access `/dev/gpio` via the `dev_fs_*` wrappers (which call Zephyr VFS → devfs → GPIO driver).
 - WASI (libc-wasi) is compiled in but crashes the device during `wasm_runtime_instantiate` — a Zephyr platform incompatibility in WAMR's SSP layer. Use native imports (registered via `RuntimeInitArgs.native_symbols`) until WASI is fixed.
 - FatFS is the planned filesystem. USB mass-storage mode is exclusive: stop payloads and reject filesystem-changing HTTP operations while the host has the volume mounted.
-- The flash disk is currently RAM-backed (`CONFIG_DISK_DRIVER_RAM=y`); contents are lost on reboot. Switch to real flash partition for persistent storage.
+- The flash disk is backed by the real `storage_partition` via `zephyr,flash-disk`; contents are intended to persist across reboot.
