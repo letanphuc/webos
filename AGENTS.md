@@ -15,18 +15,49 @@
 - The target board is `esp32s3_devkitc/esp32s3/procpu` (was `esp32s3_devkitm`; Zephyr maps the deprecated name automatically).
 - After `source .env`, use `build`, `rebuild`, `flash`, `run`, `monitor`, `menuconfig`, `clean`, and `twister_app` from the workspace root.
 - Standard device workflow from the workspace root:
-  - Build: `source .env && build`
-  - Flash: `source .env && flash`
+  - Incremental build: `source .env && build`
+  - Clean rebuild after Zephyr/MCUboot/config branch changes: `source .env && rebuild`
+  - Flash current build: `source .env && flash`
   - Build and flash: `source .env && run`
-  - View logs interactively: `source .env && monitor`
-  - View logs with timeout: `gtimeout 10s script -q /dev/null bash -c 'source .env && monitor'`
-- `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud. The flash helper uses `WEBOS_BAUD=460800`.
+  - Interactive UART logs: `source .env && monitor`
+  - Timed UART logs: `gtimeout 20s script -q /dev/null bash -c 'source .env && WEBOS_PORT=/dev/tty.usbserial-130 monitor'`
+  - Build with explicit device port: `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`
+- `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud. The flash helper uses `WEBOS_BAUD=460800`; the current frequently used device is `/dev/tty.usbserial-130`.
+- If flashing fails with `Resource busy`, close any monitor session and check both serial aliases with `lsof /dev/tty.usbserial-130 /dev/cu.usbserial-130`, then retry `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`.
 - For device-side HTTP, shell, file push, log, OTA, and WASM smoke tests, use `webdb` from the workspace root after `source .env`, e.g. `tools/webdb/target/debug/webdb shell fs ls /dev` or `tools/webdb/target/debug/webdb shell iwasm exec /STORAGE:/apps/blink2.wasm 2`.
 - Avoid raw `curl` and custom Python snippets for device HTTP/shell testing; use `tools/webdb/target/debug/webdb ...` so host/device interactions follow the repo-supported path.
+- Common `webdb` checks after Wi-Fi connects:
+  - Health/shell smoke: `source .env && tools/webdb/target/debug/webdb shell fs ls /dev`
+  - Read logs: `source .env && tools/webdb/target/debug/webdb log`
+  - Follow logs: `source .env && tools/webdb/target/debug/webdb log --follow`
+  - OTA upload: `source .env && tools/webdb/target/debug/webdb ota build/app/zephyr/zephyr.signed.bin`
 - WiFi credentials live in `app/wifi.conf` (gitignored). `build` and `rebuild` load it via `EXTRA_CONF_FILE`. Override with `WEBOS_WIFI_SSID`/`WEBOS_WIFI_PSK` env vars.
 - For extra config fragments (e.g. debug): `build -- -DEXTRA_CONF_FILE=debug.conf`. Multiple fragments: `build -- -DEXTRA_CONF_FILE="debug.conf;other.conf"`.
 - Run application Twister builds after `source .env` with `twister_app`.
 - Run library tests with `west twister -T webos/tests -v --inline-logs --integration` from the workspace root.
+
+## Boot And OTA Debugging
+
+- Normal non-RAM-load boot shows MCUboot loading the primary image from flash and mapping IROM/DROM from flash:
+  - `I (boot): Loading image 0 - slot 0 from flash, area id: 2`
+  - `I (boot): IROM ... map`
+  - `I (boot): DROM ... map`
+- RAM-load boot shows MCUboot copying from `slot0` into PSRAM before validation and jump:
+  - `MCUboot PSRAM mapped at vaddr=0x3c000000 size=0x800000`
+  - `flash_esp32: PSRAM flash read req src=0x20000 dst=0x3c000000 len=...`
+  - `mcuboot: Image 0 loaded from the primary slot`
+  - `mcuboot: booting RAM-loaded ESP32 image at ...`
+- If the app is reverted to non-RAM-load but Zephyr or MCUboot remains on RAM-load commits, boot can fail or MCUboot can try to erase/remove a secondary image. Keep app, Zephyr, and MCUboot commits aligned before `run`.
+- Known stable non-RAM-load alignment from the RAM-load rollback session:
+  - app repo `main` at or after `7842c1e Revert "app: enable ESP32-S3 MCUboot RAM load"`
+  - Zephyr at `d4edf519ff9` (parent of local RAM-load patch `aaa5e9b5ed4`)
+  - MCUboot at `0fae8920`
+- RAM-load branches/commits kept for reference:
+  - app `origin/ram-load`
+  - Zephyr local commit `aaa5e9b5ed4 esp32s3: support MCUboot PSRAM RAM load`
+  - MCUboot fork `git@github.com:letanphuc/zephyr-mcuboot.git`, branch `ram-load`, commit `9efb22a8ec6ea39950fa5e26ce8a4bf7f275642f`
+- RAM-load OTA findings are documented in `docs/ram-load-ota.md`. Important lesson: live erase/write of `slot0` while the full app and Wi-Fi stack are running is not proven safe. Direct `HTTP -> slot0`, 4 KB inline buffers, double-buffer worker flashing, and erase-up-front all showed stalls, timeouts, or fatal exceptions. Full-image PSRAM staging completed once but is not proven reliable.
+- For future fast OTA work, prefer a staging/updater design over live `slot0` mutation. Do not assume RAM-load means all runtime code, rodata, Wi-Fi blobs, interrupt paths, and flash/cache operations are independent of the original flash slot.
 
 ## Coding Style
 
