@@ -419,6 +419,7 @@ static int cmd_iwasm_exec(const struct shell* sh, size_t argc, char** argv) {
   if (ret != 0) {
     shell_error(sh, "iwasm exec failed: %d", ret);
   }
+  shell_print(sh, "WEBOS_EVENT app-run-complete rc=%d", ret);
   return ret;
 }
 
