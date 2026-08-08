@@ -14,7 +14,7 @@
 - The manifest allowlist currently pulls only `zephyr`, `hal_espressif`, `mbedtls`, and `mcuboot`; add modules in `west.yml` before using other Zephyr subsystems that require external modules.
 - The target board is `esp32s3_devkitc/esp32s3/procpu` (was `esp32s3_devkitm`; Zephyr maps the deprecated name automatically).
 - After `source .env`, use `build`, `rebuild`, `flash`, `run`, `monitor`, `menuconfig`, `clean`, and `twister_app` from the workspace root.
-- Always finish code validation with `source .env && west webos test`; it builds and flashes the current firmware, then exercises devfs, GPIO, RGB LED, and WASM applications on the physical development device. Host-only builds and emulated tests are not sufficient.
+- Do not run `west webos test`; it can hang on the physical-device test sequence. Validate device changes with the normal targeted workflow instead: flash the firmware with `wdb flash`, then build and run the application under test with `wdb app run <app-path> -- <args>`.
 - Standard device workflow from the workspace root:
   - Incremental build: `source .env && build`
   - Clean rebuild after Zephyr/MCUboot/config branch changes: `source .env && rebuild`
