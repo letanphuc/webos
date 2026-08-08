@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/logging/log.h>
 
@@ -22,26 +23,50 @@
 LOG_MODULE_REGISTER(webos, LOG_LEVEL_INF);
 
 int main(void) {
+  struct webos_health_status health = {0};
+  int ret;
+
   LOG_INF("WebOS starting on ESP32-S3");
 
   ota_init();
-  boot_write_img_confirmed();
-  init_filesystem_layout();
-  connect_wifi();
+  health.filesystem = init_filesystem_layout();
+
 #if defined(CONFIG_WEBOS_DEVFS)
-  devfs_register();
+  health.devfs = devfs_register();
 #endif
 #if defined(CONFIG_WEBOS_GPIO)
-  webos_gpio_register_devfs();
+  health.gpio = health.devfs == 0 ? webos_gpio_register_devfs() : -ECANCELED;
 #endif
 #if defined(CONFIG_WEBOS_RGBLED)
-  webos_rgbled_register_devfs();
+  health.led = health.devfs == 0 ? webos_rgbled_register_devfs() : -ECANCELED;
 #endif
+
+  health.iwasm = iwasm_init();
+
+  if (health.filesystem == 0 && health.devfs == 0 && health.gpio == 0 && health.led == 0 && health.iwasm == 0) {
+    ret = mcuboot_swap_type();
+    if (ret == BOOT_SWAP_TYPE_REVERT) {
+      ret = boot_write_img_confirmed();
+      if (ret != 0) {
+        LOG_ERR("MCUboot image confirmation failed: %d", ret);
+      }
+    } else if (ret < 0) {
+      LOG_WRN("Cannot read MCUboot swap state: %d", ret);
+    }
+  } else {
+    LOG_ERR("Local service initialization failed; leaving MCUboot test image unconfirmed");
+  }
+
+  health.wifi = connect_wifi();
 #if defined(CONFIG_WEBOS_SSH)
   ssh_service_start();
 #endif
-  iwasm_init();
-  webos_http_init();
 
-  return 0;
+  webos_health_set(&health);
+  ret = webos_http_init();
+
+  LOG_INF("Startup: filesystem=%d devfs=%d gpio=%d led=%d iwasm=%d wifi=%d http=%d", health.filesystem, health.devfs,
+          health.gpio, health.led, health.iwasm, health.wifi, ret);
+
+  return ret;
 }

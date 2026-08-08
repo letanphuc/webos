@@ -11,6 +11,17 @@
 
 extern uint16_t webos_http_port;
 
+struct webos_health_status {
+  int filesystem;
+  int devfs;
+  int gpio;
+  int led;
+  int iwasm;
+  int wifi;
+};
+
+void webos_health_set(const struct webos_health_status* status);
+const struct webos_health_status* webos_health_get(void);
 void set_json_response(struct http_response_ctx* ctx, enum http_status status, const char* body, size_t body_len);
 void set_text_response(struct http_response_ctx* ctx, enum http_status status, const char* body, size_t body_len);
 int webos_http_init(void);

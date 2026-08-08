@@ -82,6 +82,7 @@ int write_file(const char* path, const char* data) {
 
 int write_file_bin(const char* path, const uint8_t* data, size_t data_len) {
   struct fs_file_t file;
+  fs_mode_t flags = FS_O_CREATE | FS_O_RDWR;
   int ret;
 
   if (!webos_path_allowed(path)) {
@@ -90,6 +91,7 @@ int write_file_bin(const char* path, const uint8_t* data, size_t data_len) {
   }
 
   if (strncmp(path, "/dev/", strlen("/dev/")) != 0) {
+    flags |= FS_O_TRUNC;
     ret = ensure_parent_dirs(path);
     if (ret != 0) {
       LOG_ERR("write_file_bin: ensure_parent_dirs(%s) failed: %d", path, ret);
@@ -98,7 +100,7 @@ int write_file_bin(const char* path, const uint8_t* data, size_t data_len) {
   }
 
   fs_file_t_init(&file);
-  ret = fs_open(&file, path, FS_O_CREATE | FS_O_RDWR);
+  ret = fs_open(&file, path, flags);
   if (ret != 0) {
     LOG_ERR("write_file_bin: fs_open(%s) failed: %d", path, ret);
     return ret;
@@ -114,9 +116,14 @@ int write_file_bin(const char* path, const uint8_t* data, size_t data_len) {
   return ret < 0 ? ret : close_ret;
 }
 
-void init_filesystem_layout(void) {
+int init_filesystem_layout(void) {
+  static const char* const directories[] = {
+      WEBOS_MOUNT_POINT "/apps", WEBOS_MOUNT_POINT "/config", WEBOS_MOUNT_POINT "/logs",
+      WEBOS_MOUNT_POINT "/ota",  WEBOS_MOUNT_POINT "/www",
+  };
   struct fs_dirent dirent;
-  int ret;
+  int ret = -ENODEV;
+  int first_error = 0;
   int attempt;
 
   LOG_INF("Initializing filesystem layout under %s", WEBOS_MOUNT_POINT);
@@ -131,28 +138,16 @@ void init_filesystem_layout(void) {
   }
   if (ret != 0) {
     LOG_ERR("Filesystem %s not ready after %d attempts: %d", WEBOS_MOUNT_POINT, attempt, ret);
-    return;
+    return ret;
   }
   LOG_INF("Filesystem %s is ready", WEBOS_MOUNT_POINT);
 
-  ret = ensure_dir(WEBOS_MOUNT_POINT "/apps");
-  if (ret != 0) {
-    LOG_ERR("/apps init failed: %d", ret);
+  for (size_t i = 0; i < ARRAY_SIZE(directories); i++) {
+    ret = ensure_dir(directories[i]);
+    if (ret != 0 && first_error == 0) {
+      first_error = ret;
+    }
   }
-  ret = ensure_dir(WEBOS_MOUNT_POINT "/config");
-  if (ret != 0) {
-    LOG_ERR("/config init failed: %d", ret);
-  }
-  ret = ensure_dir(WEBOS_MOUNT_POINT "/logs");
-  if (ret != 0) {
-    LOG_ERR("/logs init failed: %d", ret);
-  }
-  ret = ensure_dir(WEBOS_MOUNT_POINT "/ota");
-  if (ret != 0) {
-    LOG_ERR("/ota init failed: %d", ret);
-  }
-  ret = ensure_dir(WEBOS_MOUNT_POINT "/www");
-  if (ret != 0) {
-    LOG_ERR("/www init failed: %d", ret);
-  }
+
+  return first_error;
 }

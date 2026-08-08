@@ -12,9 +12,9 @@
 
 #include "devfs.h"
 
-LOG_MODULE_REGISTER(webos_rgbled, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(webos_led, LOG_LEVEL_DBG);
 
-#define DT_DRV_COMPAT webos_rgbled
+#define DT_DRV_COMPAT webos_led
 
 struct webos_rgbled_dev {
   const struct device* strip;
@@ -47,7 +47,7 @@ static int webos_rgbled_show(struct webos_rgbled_dev* led) {
     pixels[i].b = led->blue;
   }
 
-  LOG_DBG("show /dev/rgbled/%u/color rgb=%u,%u,%u via %s pixels=%zu", led->webos_pin, led->red, led->green, led->blue,
+  LOG_DBG("show /dev/led/%u/color rgb=%u,%u,%u via %s pixels=%zu", led->webos_pin, led->red, led->green, led->blue,
           led->strip->name, count);
 
   ret = led_strip_update_rgb(led->strip, pixels, count);
@@ -56,7 +56,7 @@ static int webos_rgbled_show(struct webos_rgbled_dev* led) {
     return ret;
   }
 
-  LOG_DBG("show complete /dev/rgbled/%u/color", led->webos_pin);
+  LOG_DBG("show complete /dev/led/%u/color", led->webos_pin);
   return 0;
 }
 
@@ -173,7 +173,7 @@ static int webos_rgbled_open(struct devfs_file* file, void* user_data, int flags
 
   ARG_UNUSED(flags);
 
-  LOG_DBG("open /dev/rgbled/%u/color flags=0x%x", led->webos_pin, flags);
+  LOG_DBG("open /dev/led/%u/color flags=0x%x", led->webos_pin, flags);
 
   if (!device_is_ready(led->strip)) {
     LOG_ERR("LED strip device %s is not ready", led->strip->name);
@@ -206,7 +206,7 @@ static ssize_t webos_rgbled_read(struct devfs_file* file, void* dest, size_t nby
   open_file->read_eof = true;
 
   len = snprintf(buf, sizeof(buf), "%u,%u,%u\n", led->red, led->green, led->blue);
-  LOG_DBG("read /dev/rgbled/%u/color -> %s", led->webos_pin, buf);
+  LOG_DBG("read /dev/led/%u/color -> %s", led->webos_pin, buf);
   if ((size_t)len > nbytes) {
     len = (int)nbytes;
   }
@@ -232,7 +232,7 @@ static ssize_t webos_rgbled_write(struct devfs_file* file, const void* src, size
     led->red = 0;
     led->green = 0;
     led->blue = 0;
-    LOG_DBG("write /dev/rgbled/%u/color raw off", led->webos_pin);
+    LOG_DBG("write /dev/led/%u/color raw off", led->webos_pin);
 
     ret = webos_rgbled_show(led);
     if (ret < 0) {
@@ -241,13 +241,13 @@ static ssize_t webos_rgbled_write(struct devfs_file* file, const void* src, size
     return (ssize_t)nbytes;
   }
 
-  if (nbytes == 3) {
+  if (nbytes == 3 && memcmp(src, "red", 3) != 0 && memcmp(src, "off", 3) != 0) {
     const uint8_t* rgb = src;
 
     led->red = rgb[0];
     led->green = rgb[1];
     led->blue = rgb[2];
-    LOG_DBG("write /dev/rgbled/%u/color raw rgb=%u,%u,%u", led->webos_pin, led->red, led->green, led->blue);
+    LOG_DBG("write /dev/led/%u/color raw rgb=%u,%u,%u", led->webos_pin, led->red, led->green, led->blue);
 
     ret = webos_rgbled_show(led);
     if (ret < 0) {
@@ -260,15 +260,15 @@ static ssize_t webos_rgbled_write(struct devfs_file* file, const void* src, size
   memcpy(buf, src, copy_len);
   buf[copy_len] = '\0';
 
-  LOG_DBG("write /dev/rgbled/%u/color bytes=%zu data='%s'", led->webos_pin, nbytes, buf);
+  LOG_DBG("write /dev/led/%u/color bytes=%zu data='%s'", led->webos_pin, nbytes, buf);
 
   ret = parse_color(buf, &red, &green, &blue);
   if (ret < 0) {
-    LOG_ERR("parse /dev/rgbled/%u/color failed: %d", led->webos_pin, ret);
+    LOG_ERR("parse /dev/led/%u/color failed: %d", led->webos_pin, ret);
     return ret;
   }
 
-  LOG_DBG("parsed /dev/rgbled/%u/color rgb=%u,%u,%u", led->webos_pin, red, green, blue);
+  LOG_DBG("parsed /dev/led/%u/color rgb=%u,%u,%u", led->webos_pin, red, green, blue);
 
   led->red = red;
   led->green = green;
@@ -284,7 +284,7 @@ static int webos_rgbled_close(struct devfs_file* file) {
   struct webos_rgbled_open_file* open_file = devfs_file_data(file);
 
   if (open_file != NULL) {
-    LOG_DBG("close /dev/rgbled/%u/color", open_file->led->webos_pin);
+    LOG_DBG("close /dev/led/%u/color", open_file->led->webos_pin);
   }
   k_free(devfs_file_data(file));
   devfs_file_set_data(file, NULL);
@@ -314,7 +314,7 @@ int webos_rgbled_register_devfs(void) {
   for (size_t i = 0; i < ARRAY_SIZE(webos_rgbleds); i++) {
     struct webos_rgbled_dev* led = &webos_rgbleds[i];
 
-    snprintk(led->path, sizeof(led->path), "/rgbled/%u/color", led->webos_pin);
+    snprintk(led->path, sizeof(led->path), "/led/%u/color", led->webos_pin);
 
     LOG_DBG("registering %s for %s logical pin %u chain length %u", led->path, led->strip->name, led->webos_pin,
             led->chain_length);
@@ -327,7 +327,7 @@ int webos_rgbled_register_devfs(void) {
     if (ret != 0) {
       return ret;
     }
-    LOG_INF("registered /dev/rgbled/%u for %s", led->webos_pin, led->name);
+    LOG_INF("registered /dev/led/%u for %s", led->webos_pin, led->name);
   }
 
   return 0;

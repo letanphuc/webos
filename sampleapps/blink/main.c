@@ -1,7 +1,4 @@
-extern void sleep_ms(int ms);
-extern void log_print(const char* msg);
-extern int dev_fs_write(const char* path, const char* data);
-extern int dev_fs_read(const char* path, char* buf);
+#include "webos.h"
 
 static void itos(char* buf, int n) {
   char tmp[12];
@@ -56,16 +53,16 @@ int main(int argc, char** argv) {
   log_print("blink: starting");
 
   make_path(path, sizeof(path), pin, "/direction");
-  dev_fs_write(path, "out");
+  dev_fs_write(path, "out", 3);
 
   for (int i = 0; i < count; i++) {
     make_path(path, sizeof(path), pin, "/value");
-    dev_fs_write(path, "1");
+    dev_fs_write(path, "1", 1);
     log_print("ON");
 
     sleep_ms(500);
 
-    dev_fs_write(path, "0");
+    dev_fs_write(path, "0", 1);
     log_print("OFF");
 
     if (i < count - 1) {
@@ -74,8 +71,11 @@ int main(int argc, char** argv) {
   }
 
   make_path(path, sizeof(path), pin, "/value");
-  dev_fs_read(path, buf);
-  log_print(buf);
+  int bytes_read = dev_fs_read(path, buf, sizeof(buf) - 1);
+  if (bytes_read >= 0) {
+    buf[bytes_read] = '\0';
+    log_print(buf);
+  }
 
   log_print("blink: done");
   return 0;

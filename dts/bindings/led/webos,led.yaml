@@ -2,7 +2,7 @@
 
 description: WebOS RGB LED strip exported through devfs
 
-compatible: "webos,rgbled"
+compatible: "webos,led"
 
 include: base.yaml
 
@@ -15,4 +15,4 @@ properties:
   webos-pin:
     type: int
     required: true
-    description: Logical GPIO pin number used in the /dev/rgbled/<n>/color path.
+    description: Logical GPIO pin number used in the /dev/led/<n>/color path.

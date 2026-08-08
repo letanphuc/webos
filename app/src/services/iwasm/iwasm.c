@@ -129,22 +129,29 @@ static void log_print(wasm_exec_env_t exec_env, const char* msg) {
   }
 }
 
-static int32_t dev_fs_write(wasm_exec_env_t exec_env, const char* path, const char* data) {
+static int32_t dev_fs_write(wasm_exec_env_t exec_env, const char* path, const uint8_t* data, uint32_t len) {
+  wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
   struct fs_file_t file;
+  fs_mode_t flags = FS_O_CREATE | FS_O_WRITE;
   int ret;
 
-  if (!path || !data) {
+  if (!path || (!data && len > 0)) {
     return -EINVAL;
+  }
+  if (len > 0 && !wasm_runtime_validate_native_addr(module_inst, (void*)data, len)) {
+    return -EFAULT;
+  }
+
+  if (strncmp(path, "/dev/", strlen("/dev/")) != 0) {
+    flags |= FS_O_TRUNC;
   }
 
   fs_file_t_init(&file);
-  ret = fs_open(&file, path, FS_O_CREATE | FS_O_WRITE);
+  ret = fs_open(&file, path, flags);
   if (ret != 0) {
     LOG_ERR("payload: dev_fs_write open(%s) err %d", path, ret);
     return ret;
   }
-
-  size_t len = strlen(data);
 
   ret = (int)fs_write(&file, data, len);
   fs_close(&file);
@@ -155,12 +162,16 @@ static int32_t dev_fs_write(wasm_exec_env_t exec_env, const char* path, const ch
   return ret;
 }
 
-static int32_t dev_fs_read(wasm_exec_env_t exec_env, const char* path, char* buf) {
+static int32_t dev_fs_read(wasm_exec_env_t exec_env, const char* path, uint8_t* data, uint32_t capacity) {
+  wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
   struct fs_file_t file;
   int ret;
 
-  if (!path || !buf) {
+  if (!path || (!data && capacity > 0)) {
     return -EINVAL;
+  }
+  if (capacity > 0 && !wasm_runtime_validate_native_addr(module_inst, data, capacity)) {
+    return -EFAULT;
   }
 
   fs_file_t_init(&file);
@@ -170,20 +181,19 @@ static int32_t dev_fs_read(wasm_exec_env_t exec_env, const char* path, char* buf
     return ret;
   }
 
-  ssize_t n = fs_read(&file, buf, 15);
-  buf[n > 0 ? n : 0] = '\0';
+  ret = (int)fs_read(&file, data, capacity);
   fs_close(&file);
 
-  if (n < 0) {
-    LOG_ERR("payload: dev_fs_read read(%s) err %zd", path, n);
+  if (ret < 0) {
+    LOG_ERR("payload: dev_fs_read read(%s) err %d", path, ret);
   }
-  return (int32_t)(n >= 0 ? n : n);
+  return ret;
 }
 
 static NativeSymbol native_symbols[] = {
-    EXPORT_WASM_API_WITH_SIG(gpio_set, "(ii)i"),     EXPORT_WASM_API_WITH_SIG(gpio_get, "(i)i"),
-    EXPORT_WASM_API_WITH_SIG(sleep_ms, "(i)"),       EXPORT_WASM_API_WITH_SIG(log_print, "($)"),
-    EXPORT_WASM_API_WITH_SIG(dev_fs_write, "($$)i"), EXPORT_WASM_API_WITH_SIG(dev_fs_read, "($$)i"),
+    EXPORT_WASM_API_WITH_SIG(gpio_set, "(ii)i"),      EXPORT_WASM_API_WITH_SIG(gpio_get, "(i)i"),
+    EXPORT_WASM_API_WITH_SIG(sleep_ms, "(i)"),        EXPORT_WASM_API_WITH_SIG(log_print, "($)"),
+    EXPORT_WASM_API_WITH_SIG(dev_fs_write, "($*~)i"), EXPORT_WASM_API_WITH_SIG(dev_fs_read, "($*~)i"),
 };
 
 int iwasm_init(void) {
@@ -304,13 +314,8 @@ static int cmd_iwasm_exec(const struct shell* sh, size_t argc, char** argv) {
   }
 
   const char* file = argv[1];
-  int app_argc = 0;
-  char* argv_pin_for_wasm[2] = {(char*)file, NULL};
-  char** app_argv = argv_pin_for_wasm;
-
-  if (app_argc > 0) {
-    app_argv[0] = argv[2];
-  }
+  int app_argc = (int)argc - 1;
+  char** app_argv = &argv[1];
 
   k_mutex_lock(&exec_lock, K_FOREVER);
   int ret = iwasm_exec_file(sh, file, app_argc, app_argv);

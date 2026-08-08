@@ -5,7 +5,7 @@ config WEBOS_RGBLED
 	depends on WEBOS_DEVFS
 	depends on LED_STRIP
 	help
-	  Register webos,rgbled devicetree nodes as /dev/rgbled/<n>/color files.
+	  Register webos,led devicetree nodes as /dev/led/<n>/color files.
 
 config WEBOS_RGBLED_MAX_PIXELS
 	int "Maximum pixels updated by each WebOS RGB LED node"

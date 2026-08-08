@@ -9,6 +9,12 @@ LOG_MODULE_REGISTER(webos_http, LOG_LEVEL_INF);
 
 uint16_t webos_http_port = WEBOS_HTTP_PORT;
 
+static struct webos_health_status health_status;
+
+void webos_health_set(const struct webos_health_status* status) { health_status = *status; }
+
+const struct webos_health_status* webos_health_get(void) { return &health_status; }
+
 static const struct http_header json_headers[] = {
     {.name = "Content-Type", .value = "application/json"},
 };

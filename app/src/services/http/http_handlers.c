@@ -47,10 +47,19 @@ static int health_handler(struct http_client_ctx* client, enum http_transaction_
   ARG_UNUSED(client);
   ARG_UNUSED(request_ctx);
   ARG_UNUSED(user_data);
+  static char body[192];
 
   if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
-    static const char body[] = "{\"status\":\"ok\"}\n";
-    set_json_response(response_ctx, HTTP_200_OK, body, strlen(body));
+    const struct webos_health_status* health = webos_health_get();
+    bool healthy = health->filesystem == 0 && health->devfs == 0 && health->gpio == 0 && health->led == 0 &&
+                   health->iwasm == 0 && health->wifi == 0;
+    int len = snprintk(body, sizeof(body),
+                       "{\"status\":\"%s\",\"filesystem\":%d,\"devfs\":%d,\"gpio\":%d,"
+                       "\"led\":%d,\"iwasm\":%d,\"wifi\":%d}\n",
+                       healthy ? "ok" : "degraded", health->filesystem, health->devfs, health->gpio, health->led,
+                       health->iwasm, health->wifi);
+
+    set_json_response(response_ctx, HTTP_200_OK, body, len);
   }
 
   return 0;

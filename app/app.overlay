@@ -1,6 +1,5 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/led/led.h>
-#include <zephyr/dt-bindings/led/worldsemi_ws2812c.h>
 
 / {
   fstab {
@@ -27,26 +26,33 @@
   };
 
   web_rgbled48: web_rgbled48 {
-    compatible = "webos,rgbled";
-    status = "disabled";
+    compatible = "webos,led";
     led = <&led_strip>;
     webos-pin = <48>;
   };
 };
 
-&spi3 {
-  pinctrl-0 = <&spim3_rgbled>;
+&i2s0_default {
+  group1 {
+    pinmux = <I2S0_O_SD_GPIO48>;
+  };
+};
 
-  led_strip: led_strip@0 {
-    status = "disabled";
-    compatible = "worldsemi,ws2812-spi";
+i2s_led: &i2s0 {
+  status = "okay";
+
+  dmas = <&dma 3>;
+  dma-names = "tx";
+
+  led_strip: ws2812@0 {
+    compatible = "worldsemi,ws2812-i2s";
     reg = <0>;
-    spi-max-frequency = <2400000>;
-    bits-per-symbol = <3>;
-    spi-one-frame = <0x6>;
-    spi-zero-frame = <0x4>;
-    reset-delay = <300>;
     chain-length = <1>;
     color-mapping = <LED_COLOR_ID_GREEN LED_COLOR_ID_RED LED_COLOR_ID_BLUE>;
+    reset-delay = <500>;
   };
+};
+
+&dma {
+  status = "okay";
 };

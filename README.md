@@ -2,7 +2,7 @@
 
 WebOS is a Zephyr-based firmware project for ESP32-S3 devices. The goal is to keep a stable host OS on the device and run small, disposable application payloads through WebAssembly.
 
-The current tree is in bring-up. The app builds as a C++ Zephyr application and currently runs a minimal heartbeat on ESP32-S3.
+The current tree provides Wi-Fi management, FatFS storage, devfs hardware access, OTA, and a WAMR payload runtime on ESP32-S3.
 
 ## Direction
 
@@ -29,7 +29,7 @@ Important paths:
 
 ```text
 app/              Zephyr application entry point
-app/src/main.cpp  current C++ firmware entry point
+app/src/main.c    firmware entry point and service initialization
 docs/idea.md      product and architecture direction
 west.yml          west manifest for Zephyr and required modules
 boards/           out-of-tree board support, if needed
@@ -63,6 +63,14 @@ Use a Zephyr development environment with:
 
 This workspace expects the helper environment at `/Users/phuc/Work/webos/.env` to activate the Python venv and load `webos/app/.env`.
 
+WASM sample payloads use WASI SDK 34. The local default is:
+
+```text
+~/.local/share/wasi-sdk
+```
+
+Override it with `WASI_SDK=/path/to/wasi-sdk` when needed.
+
 ## Workspace Setup
 
 From the workspace root:
@@ -84,10 +92,10 @@ This sets the main local variables:
 ```text
 WEBOS_APP_DIR=/Users/phuc/Work/webos/webos/app
 WEBOS_BUILD_DIR=/Users/phuc/Work/webos/build
-WEBOS_BOARD=esp32s3_devkitm/esp32s3/procpu
+WEBOS_BOARD=webos_esp32s3/esp32s3/procpu
 ```
 
-Zephyr currently maps `esp32s3_devkitm/esp32s3/procpu` to `esp32s3_devkitc/esp32s3/procpu` and prints a deprecation warning during configure.
+The default target is the repository board `webos_esp32s3/esp32s3/procpu`.
 
 ## Build
 
@@ -138,7 +146,7 @@ monitor
 The default serial settings are:
 
 ```text
-WEBOS_PORT=/dev/tty.usbserial-1130
+WEBOS_PORT=/dev/tty.usbserial-130
 WEBOS_BAUD=115200
 ```
 
@@ -147,6 +155,8 @@ Override them before sourcing `.env` or before running the helper:
 ```sh
 WEBOS_PORT=/dev/tty.usbserial-0001 flash
 ```
+
+If the configured port is absent and exactly one `/dev/tty.usbserial-*` device is connected, `flash` and `monitor` select it automatically.
 
 ## Configuration
 
@@ -163,12 +173,32 @@ app/prj.conf
 app/debug.conf
 ```
 
-The app currently enables C++ support with:
+Application features are configured in `app/prj.conf`; local Wi-Fi credentials belong in the ignored `app/wifi.conf` fragment.
 
-```text
-CONFIG_CPP=y
-CONFIG_REQUIRES_FULL_LIBCPP=y
+## Payload Development
+
+All payloads include the shared native ABI in `sampleapps/include/webos.h` and use `sampleapps/common.mk`. Build an individual payload with:
+
+```sh
+make -C webos/sampleapps/led_colors
 ```
+
+For the normal build, upload, and execute loop, run this from the workspace root:
+
+```sh
+tools/webdb/target/debug/webdb app run webos/sampleapps/led_colors -- 3
+```
+
+The command builds `led_colors.wasm`, uploads it to `/STORAGE:/apps/led_colors.wasm`, runs it through `iwasm exec`, and prints the payload output. Arguments after `--` are forwarded to the payload, with the payload path provided as `argv[0]`.
+
+The shared filesystem ABI is binary-safe:
+
+```c
+int dev_fs_write(const char* path, const void* data, unsigned int length);
+int dev_fs_read(const char* path, void* data, unsigned int capacity);
+```
+
+`dev_fs_read()` returns the number of bytes read and does not append a string terminator.
 
 ## Testing
 
@@ -196,12 +226,7 @@ This removes `/Users/phuc/Work/webos/build` when the standard environment is loa
 
 ## Current Firmware Behavior
 
-The current app entry point is `app/src/main.cpp`. It prints a startup message and a one-second heartbeat:
-
-```text
-WebOS hello from Zephyr on ESP32-S3
-WebOS heartbeat
-```
+The current app entry point is `app/src/main.c`. It initializes storage, devfs devices, WAMR, Wi-Fi, and the HTTP management service, then logs one startup status line with each component result.
 
 ## MVP Constraints
 
