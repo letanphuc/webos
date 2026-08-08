@@ -16,6 +16,10 @@ manifest:
       remote: letanphuc
       revision: main
       path: tools/webdb
+    - name: webos-wdb
+      remote: letanphuc
+      revision: main
+      path: tools/wdb
     - name: wasm-micro-runtime
       remote: letanphuc
       revision: main
