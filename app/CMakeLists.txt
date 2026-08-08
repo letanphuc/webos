@@ -19,11 +19,19 @@ target_sources(app PRIVATE
   src/services/ota/ota.c
   src/services/http/http.c
   src/services/http/http_handlers.c
+  src/services/http_client/http_client.c
   src/services/iwasm/iwasm.c
 )
 
 target_sources_ifdef(CONFIG_WEBOS_LOG_BUFFER app PRIVATE src/services/log_buffer/log_buffer.c)
 target_sources_ifdef(CONFIG_WEBOS_SSH app PRIVATE src/services/ssh/ssh.c)
+
+set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)
+generate_inc_file_for_target(
+  app
+  src/services/http_client/amazon_root_ca1.der
+  ${gen_dir}/amazon_root_ca1.der.inc
+)
 
 zephyr_linker_sources(SECTIONS sections-rom.ld)
 zephyr_linker_section(

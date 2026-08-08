@@ -5,6 +5,7 @@
 #include "hal/wifi/wifi.h"
 #include "services/fs/fs.h"
 #include "services/http/http.h"
+#include "services/http_client/http_client.h"
 #include "services/iwasm/iwasm.h"
 #include "services/ota/ota.h"
 #if defined(CONFIG_WEBOS_DEVFS)
@@ -41,7 +42,8 @@ int main(void) {
   health.led = health.devfs == 0 ? webos_rgbled_register_devfs() : -ECANCELED;
 #endif
 
-  health.iwasm = iwasm_init();
+  ret = webos_http_client_init();
+  health.iwasm = ret == 0 ? iwasm_init() : ret;
 
   if (health.filesystem == 0 && health.devfs == 0 && health.gpio == 0 && health.led == 0 && health.iwasm == 0) {
     ret = mcuboot_swap_type();

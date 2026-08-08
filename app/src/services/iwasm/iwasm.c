@@ -12,6 +12,7 @@
 #include <zephyr/sys/printk.h>
 
 #include "lib_export.h"
+#include "services/http_client/http_client.h"
 #include "wasm_export.h"
 
 LOG_MODULE_REGISTER(iwasm, LOG_LEVEL_INF);
@@ -157,11 +158,71 @@ static int32_t dev_fs_read(wasm_exec_env_t exec_env, const char* path, uint8_t* 
   return ret;
 }
 
+static int32_t web_http_request(wasm_exec_env_t exec_env, uint32_t method, const uint8_t* url, uint32_t url_len,
+                                const uint8_t* headers, uint32_t headers_len, const uint8_t* request_body,
+                                uint32_t request_body_len, uint8_t* response_body, uint32_t response_capacity,
+                                struct web_http_response* response, uint32_t response_size, uint32_t timeout_ms) {
+  wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
+  char* url_copy = NULL;
+  char* headers_copy = NULL;
+  int32_t ret;
+
+  if (!url || url_len == 0 || url_len > CONFIG_WEBOS_WASM_HTTP_MAX_URL_LEN ||
+      headers_len > CONFIG_WEBOS_WASM_HTTP_MAX_HEADERS_LEN ||
+      request_body_len > CONFIG_WEBOS_WASM_HTTP_MAX_REQUEST_BODY ||
+      response_capacity > CONFIG_WEBOS_WASM_HTTP_MAX_RESPONSE_BODY || response_size < sizeof(*response) ||
+      timeout_ms > CONFIG_WEBOS_WASM_HTTP_MAX_TIMEOUT_MS) {
+    return WEB_HTTP_ERR_INVALID;
+  }
+
+  if (!wasm_runtime_validate_native_addr(module_inst, (void*)url, url_len) ||
+      (headers_len > 0 && (!headers || !wasm_runtime_validate_native_addr(module_inst, (void*)headers, headers_len))) ||
+      (request_body_len > 0 &&
+       (!request_body || !wasm_runtime_validate_native_addr(module_inst, (void*)request_body, request_body_len))) ||
+      (response_capacity > 0 &&
+       (!response_body || !wasm_runtime_validate_native_addr(module_inst, response_body, response_capacity))) ||
+      !response || !wasm_runtime_validate_native_addr(module_inst, response, sizeof(*response))) {
+    return WEB_HTTP_ERR_INVALID;
+  }
+
+  if (memchr(url, '\0', url_len) != NULL || (headers_len > 0 && memchr(headers, '\0', headers_len) != NULL)) {
+    return WEB_HTTP_ERR_INVALID;
+  }
+
+  if (response->struct_size < sizeof(*response)) {
+    return WEB_HTTP_ERR_INVALID;
+  }
+
+  url_copy = k_malloc(url_len + 1);
+  if (!url_copy) {
+    return WEB_HTTP_ERR_BUSY;
+  }
+  memcpy(url_copy, url, url_len);
+  url_copy[url_len] = '\0';
+
+  if (headers_len > 0) {
+    headers_copy = k_malloc(headers_len + 1);
+    if (!headers_copy) {
+      k_free(url_copy);
+      return WEB_HTTP_ERR_BUSY;
+    }
+    memcpy(headers_copy, headers, headers_len);
+    headers_copy[headers_len] = '\0';
+  }
+
+  ret = webos_http_request(method, url_copy, headers_copy, request_body, request_body_len, response_body,
+                           response_capacity, response, timeout_ms);
+  k_free(headers_copy);
+  k_free(url_copy);
+  return ret;
+}
+
 static NativeSymbol native_symbols[] = {
     EXPORT_WASM_API_WITH_SIG(sleep_ms, "(i)"),
     EXPORT_WASM_API_WITH_SIG(log_print, "($)"),
     EXPORT_WASM_API_WITH_SIG(dev_fs_write, "($*~)i"),
     EXPORT_WASM_API_WITH_SIG(dev_fs_read, "($*~)i"),
+    EXPORT_WASM_API_WITH_SIG(web_http_request, "(i*~*~*~*~*~i)i"),
 };
 
 int iwasm_init(void) {

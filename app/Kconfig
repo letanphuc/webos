@@ -20,6 +20,35 @@ config WEBOS_WIFI_PSK
 	string "Wi-Fi PSK"
 	default ""
 
+menu "WASM HTTP client"
+
+config WEBOS_WASM_HTTP_MAX_URL_LEN
+	int "Maximum WASM HTTP URL length"
+	default 512
+	range 64 2048
+
+config WEBOS_WASM_HTTP_MAX_HEADERS_LEN
+	int "Maximum WASM HTTP request headers length"
+	default 1024
+	range 0 4096
+
+config WEBOS_WASM_HTTP_MAX_REQUEST_BODY
+	int "Maximum WASM HTTP request body size"
+	default 4096
+	range 0 65536
+
+config WEBOS_WASM_HTTP_MAX_RESPONSE_BODY
+	int "Maximum WASM HTTP response body size"
+	default 16384
+	range 256 131072
+
+config WEBOS_WASM_HTTP_MAX_TIMEOUT_MS
+	int "Maximum WASM HTTP request timeout"
+	default 30000
+	range 1000 300000
+
+endmenu
+
 config WEBOS_LOG_BUFFER
 	bool "Enable WebOS log buffer for wdb log command"
 	select LOG_OUTPUT
