@@ -12,6 +12,8 @@
 #include <zephyr/sys/printk.h>
 
 #include "lib_export.h"
+#include "services/app/app_context.h"
+#include "services/fs/fs.h"
 #include "services/http_client/http_client.h"
 #include "wasm_export.h"
 
@@ -89,82 +91,97 @@ static void* iwasm_realloc(void* ptr, unsigned int size) {
   return new_ptr;
 }
 
-static void sleep_ms(wasm_exec_env_t exec_env, uint32_t ms) { k_sleep(K_MSEC(ms)); }
+static struct webos_app_context* app_context(wasm_exec_env_t exec_env) {
+  wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
+  return (struct webos_app_context*)wasm_runtime_get_custom_data(module_inst);
+}
 
-static void log_print(wasm_exec_env_t exec_env, const char* msg) {
-  if (msg) {
-    LOG_INF("payload: %s", msg);
+static bool valid_range(wasm_exec_env_t exec_env, const void* data, uint32_t length) {
+  wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
+  return length == 0 || (data != NULL && wasm_runtime_validate_native_addr(module_inst, (void*)data, length));
+}
+
+static void host_webos_sleep_ms(wasm_exec_env_t exec_env, uint32_t ms) { k_sleep(K_MSEC(ms)); }
+
+static void host_webos_log(wasm_exec_env_t exec_env, uint32_t level, const uint8_t* data, uint32_t length) {
+  struct webos_app_context* context = app_context(exec_env);
+  if (context == NULL || length > context->max_io_bytes || !valid_range(exec_env, data, length)) return;
+  switch (level) {
+    case WEBOS_LOG_ERROR:
+      LOG_HEXDUMP_ERR(data, length, context->id);
+      break;
+    case WEBOS_LOG_WARN:
+      LOG_HEXDUMP_WRN(data, length, context->id);
+      break;
+    case WEBOS_LOG_DEBUG:
+      LOG_HEXDUMP_DBG(data, length, context->id);
+      break;
+    default:
+      LOG_HEXDUMP_INF(data, length, context->id);
+      break;
   }
 }
 
-static int32_t dev_fs_write(wasm_exec_env_t exec_env, const char* path, const uint8_t* data, uint32_t len) {
-  wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
+static int32_t host_webos_write(wasm_exec_env_t exec_env, const char* path, const uint8_t* data, uint32_t len) {
+  struct webos_app_context* context = app_context(exec_env);
   struct fs_file_t file;
   fs_mode_t flags = FS_O_CREATE | FS_O_WRITE;
   int ret;
-
-  if (!path || (!data && len > 0)) {
-    return -EINVAL;
-  }
-  if (len > 0 && !wasm_runtime_validate_native_addr(module_inst, (void*)data, len)) {
-    return -EFAULT;
-  }
-
-  if (strncmp(path, "/dev/", strlen("/dev/")) != 0) {
-    flags |= FS_O_TRUNC;
-  }
-
+  if (context == NULL || len > context->max_io_bytes) return WEBOS_TOO_LARGE;
+  if (!webos_app_path_allowed(context, path)) return WEBOS_DENIED;
+  if (!valid_range(exec_env, data, len)) return WEBOS_INVALID;
+  if (strncmp(path, "/dev/", 5) != 0) flags |= FS_O_TRUNC;
   fs_file_t_init(&file);
   ret = fs_open(&file, path, flags);
-  if (ret != 0) {
-    LOG_ERR("payload: dev_fs_write open(%s) err %d", path, ret);
-    return ret;
-  }
-
-  ret = (int)fs_write(&file, data, len);
-  fs_close(&file);
-
-  if (ret < 0) {
-    LOG_ERR("payload: dev_fs_write write(%s) err %d", path, ret);
-  }
-  return ret;
+  if (ret == 0) ret = (int)fs_write(&file, data, len);
+  if (file.filep != NULL) fs_close(&file);
+  return webos_abi_map_errno(ret);
 }
 
-static int32_t dev_fs_read(wasm_exec_env_t exec_env, const char* path, uint8_t* data, uint32_t capacity) {
-  wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
+static int32_t host_webos_read(wasm_exec_env_t exec_env, const char* path, uint8_t* data, uint32_t capacity) {
+  struct webos_app_context* context = app_context(exec_env);
   struct fs_file_t file;
   int ret;
-
-  if (!path || (!data && capacity > 0)) {
-    return -EINVAL;
-  }
-  if (capacity > 0 && !wasm_runtime_validate_native_addr(module_inst, data, capacity)) {
-    return -EFAULT;
-  }
-
+  if (context == NULL || capacity > context->max_io_bytes) return WEBOS_TOO_LARGE;
+  if (!webos_app_path_allowed(context, path)) return WEBOS_DENIED;
+  if (!valid_range(exec_env, data, capacity)) return WEBOS_INVALID;
   fs_file_t_init(&file);
   ret = fs_open(&file, path, FS_O_READ);
-  if (ret != 0) {
-    LOG_ERR("payload: dev_fs_read open(%s) err %d", path, ret);
-    return ret;
-  }
-
-  ret = (int)fs_read(&file, data, capacity);
-  fs_close(&file);
-
-  if (ret < 0) {
-    LOG_ERR("payload: dev_fs_read read(%s) err %d", path, ret);
-  }
-  return ret;
+  if (ret == 0) ret = (int)fs_read(&file, data, capacity);
+  if (file.filep != NULL) fs_close(&file);
+  return webos_abi_map_errno(ret);
 }
 
-static int32_t web_http_request(wasm_exec_env_t exec_env, uint32_t method, const uint8_t* url, uint32_t url_len,
-                                const uint8_t* headers, uint32_t headers_len, const uint8_t* request_body,
-                                uint32_t request_body_len, uint8_t* response_body, uint32_t response_capacity,
-                                struct web_http_response* response, uint32_t response_size, uint32_t timeout_ms) {
+static void host_webos_ready(wasm_exec_env_t exec_env) { webos_app_mark_ready(app_context(exec_env), k_uptime_get()); }
+
+static void host_webos_heartbeat(wasm_exec_env_t exec_env) {
+  webos_app_mark_heartbeat(app_context(exec_env), k_uptime_get());
+}
+
+/* Pre-v1 aliases remain registered so existing development payloads keep working. */
+static void sleep_ms(wasm_exec_env_t exec_env, uint32_t ms) { host_webos_sleep_ms(exec_env, ms); }
+static void log_print(wasm_exec_env_t exec_env, const char* msg) {
+  host_webos_log(exec_env, WEBOS_LOG_INFO, (const uint8_t*)msg, msg == NULL ? 0 : strlen(msg));
+}
+static int32_t dev_fs_write(wasm_exec_env_t e, const char* p, const uint8_t* d, uint32_t n) {
+  return host_webos_write(e, p, d, n);
+}
+static int32_t dev_fs_read(wasm_exec_env_t e, const char* p, uint8_t* d, uint32_t n) {
+  return host_webos_read(e, p, d, n);
+}
+
+static int32_t host_web_http_request(wasm_exec_env_t exec_env, uint32_t method, const uint8_t* url, uint32_t url_len,
+                                     const uint8_t* headers, uint32_t headers_len, const uint8_t* request_body,
+                                     uint32_t request_body_len, uint8_t* response_body, uint32_t response_capacity,
+                                     struct web_http_response* response, uint32_t response_size, uint32_t timeout_ms) {
   wasm_module_inst_t module_inst = wasm_runtime_get_module_inst(exec_env);
   char* url_copy = NULL;
   char* headers_copy = NULL;
+  struct web_http_response response_copy;
+  uintptr_t response_start;
+  uintptr_t response_end;
+  uintptr_t body_start;
+  uintptr_t body_end;
   int32_t ret;
 
   if (!url || url_len == 0 || url_len > CONFIG_WEBOS_WASM_HTTP_MAX_URL_LEN ||
@@ -185,11 +202,24 @@ static int32_t web_http_request(wasm_exec_env_t exec_env, uint32_t method, const
     return WEB_HTTP_ERR_INVALID;
   }
 
+  response_start = (uintptr_t)response;
+  response_end = response_start + sizeof(*response);
+  body_start = (uintptr_t)response_body;
+  body_end = body_start + response_capacity;
+  if (response_capacity > 0 && response_start < body_end && body_start < response_end) {
+    return WEB_HTTP_ERR_INVALID;
+  }
+
   if (memchr(url, '\0', url_len) != NULL || (headers_len > 0 && memchr(headers, '\0', headers_len) != NULL)) {
     return WEB_HTTP_ERR_INVALID;
   }
 
-  if (response->struct_size < sizeof(*response)) {
+  if (!webos_app_url_allowed(app_context(exec_env), (const char*)url, url_len)) {
+    return WEB_HTTP_ERR_DENIED;
+  }
+
+  memcpy(&response_copy, response, sizeof(response_copy));
+  if (response_copy.struct_size < sizeof(response_copy)) {
     return WEB_HTTP_ERR_INVALID;
   }
 
@@ -211,18 +241,25 @@ static int32_t web_http_request(wasm_exec_env_t exec_env, uint32_t method, const
   }
 
   ret = webos_http_request(method, url_copy, headers_copy, request_body, request_body_len, response_body,
-                           response_capacity, response, timeout_ms);
+                           response_capacity, &response_copy, timeout_ms);
+  memcpy(response, &response_copy, sizeof(response_copy));
   k_free(headers_copy);
   k_free(url_copy);
   return ret;
 }
 
 static NativeSymbol native_symbols[] = {
+    {"webos_log", (void*)host_webos_log, "(i*~)", NULL},
+    {"webos_sleep_ms", (void*)host_webos_sleep_ms, "(i)", NULL},
+    {"webos_write", (void*)host_webos_write, "($*~)i", NULL},
+    {"webos_read", (void*)host_webos_read, "($*~)i", NULL},
+    {"webos_ready", (void*)host_webos_ready, "()", NULL},
+    {"webos_heartbeat", (void*)host_webos_heartbeat, "()", NULL},
     EXPORT_WASM_API_WITH_SIG(sleep_ms, "(i)"),
     EXPORT_WASM_API_WITH_SIG(log_print, "($)"),
     EXPORT_WASM_API_WITH_SIG(dev_fs_write, "($*~)i"),
     EXPORT_WASM_API_WITH_SIG(dev_fs_read, "($*~)i"),
-    EXPORT_WASM_API_WITH_SIG(web_http_request, "(i*~*~*~*~*~i)i"),
+    {"web_http_request", (void*)host_web_http_request, "(i*~*~*~*~*~i)i", NULL},
 };
 
 int iwasm_init(void) {
@@ -247,6 +284,17 @@ int iwasm_init(void) {
   return 0;
 }
 
+static int validate_module_abi(wasm_module_t module) {
+  uint32_t length = 0;
+  const uint8_t* metadata = wasm_runtime_get_custom_section(module, ".custom_section.webos.abi", &length);
+  uint32_t requested_version;
+
+  if (metadata == NULL || length != sizeof(requested_version)) return WEBOS_UNSUPPORTED;
+  requested_version = (uint32_t)metadata[0] | ((uint32_t)metadata[1] << 8) | ((uint32_t)metadata[2] << 16) |
+                      ((uint32_t)metadata[3] << 24);
+  return webos_abi_check_version(requested_version);
+}
+
 static int iwasm_exec_file(const struct shell* sh, const char* path, int app_argc, char** app_argv) {
   struct fs_file_t file;
   ssize_t file_size;
@@ -254,6 +302,7 @@ static int iwasm_exec_file(const struct shell* sh, const char* path, int app_arg
   wasm_module_t module = NULL;
   wasm_module_inst_t module_inst = NULL;
   char error_buf[128];
+  struct webos_app_context context;
   int ret = -1;
 
   if (!runtime_ready) {
@@ -306,6 +355,12 @@ static int iwasm_exec_file(const struct shell* sh, const char* path, int app_arg
     goto cleanup_buf;
   }
 
+  ret = validate_module_abi(module);
+  if (ret != WEBOS_OK) {
+    LOG_ERR("Rejecting %s: missing or unsupported WebOS ABI metadata", path);
+    goto cleanup_module;
+  }
+
   LOG_INF("iwasm: instantiating module...");
   module_inst = wasm_runtime_instantiate(module, 65536, 65536, error_buf, sizeof(error_buf));
   LOG_INF("iwasm: instantiate done, inst=%p", (void*)module_inst);
@@ -314,6 +369,16 @@ static int iwasm_exec_file(const struct shell* sh, const char* path, int app_arg
     ret = -EINVAL;
     goto cleanup_module;
   }
+
+  ret = webos_app_context_init(&context, "shell-app", "development");
+  if (ret != WEBOS_OK) goto cleanup_instance;
+  /* Shell execution is an explicit development context until package grants are available. */
+  context.path_grants[0] = "/dev";
+  context.path_grants[1] = "/STORAGE:/apps";
+  context.path_grant_count = 2;
+  context.http_origins[0] = "*";
+  context.http_origin_count = 1;
+  wasm_runtime_set_custom_data(module_inst, &context);
 
   active_shell = sh;
   if (!wasm_application_execute_main(module_inst, app_argc, app_argv)) {
@@ -328,6 +393,7 @@ static int iwasm_exec_file(const struct shell* sh, const char* path, int app_arg
     ret = 0;
   }
 
+cleanup_instance:
   wasm_runtime_deinstantiate(module_inst);
 cleanup_module:
   wasm_runtime_unload(module);

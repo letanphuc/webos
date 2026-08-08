@@ -1,5 +1,7 @@
 #include "webos.h"
 
+WEBOS_DECLARE_ABI_VERSION()
+
 #define DEFAULT_URL "https://api.api-ninjas.com/v1/sudokugenerate?difficulty=easy"
 
 static unsigned int text_len(const char* text) {

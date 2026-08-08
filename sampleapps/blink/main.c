@@ -1,5 +1,7 @@
 #include "webos.h"
 
+WEBOS_DECLARE_ABI_VERSION()
+
 static void itos(char* buf, int n) {
   char tmp[12];
   int i = 0;
@@ -53,25 +55,25 @@ int main(int argc, char** argv) {
   log_print("blink: starting");
 
   make_path(path, sizeof(path), pin, "/direction");
-  dev_fs_write(path, "out", 3);
+  webos_write(path, "out", 3);
 
   for (int i = 0; i < count; i++) {
     make_path(path, sizeof(path), pin, "/value");
-    dev_fs_write(path, "1", 1);
+    webos_write(path, "1", 1);
     log_print("ON");
 
-    sleep_ms(500);
+    webos_sleep_ms(500);
 
-    dev_fs_write(path, "0", 1);
+    webos_write(path, "0", 1);
     log_print("OFF");
 
     if (i < count - 1) {
-      sleep_ms(500);
+      webos_sleep_ms(500);
     }
   }
 
   make_path(path, sizeof(path), pin, "/value");
-  int bytes_read = dev_fs_read(path, buf, sizeof(buf) - 1);
+  int bytes_read = webos_read(path, buf, sizeof(buf) - 1);
   if (bytes_read >= 0) {
     buf[bytes_read] = '\0';
     log_print(buf);

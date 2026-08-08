@@ -1,0 +1,36 @@
+schema: 1
+abi:
+  name: webos
+  version: "1.0"
+  import_module: env
+errors:
+  OK: 0
+  INVALID: -1
+  DENIED: -2
+  NOT_FOUND: -3
+  IO: -4
+  TOO_LARGE: -5
+  BUSY: -6
+  UNSUPPORTED: -7
+log_levels:
+  ERROR: 1
+  WARN: 2
+  INFO: 3
+  DEBUG: 4
+functions:
+  - {name: webos_log, result: void, params: [[level, u32], [data, const_ptr], [length, u32]]}
+  - {name: webos_sleep_ms, result: void, params: [[milliseconds, u32]]}
+  - {name: webos_read, result: i32, params: [[path, cstr], [data, ptr], [capacity, u32]]}
+  - {name: webos_write, result: i32, params: [[path, cstr], [data, const_ptr], [length, u32]]}
+  - {name: webos_ready, result: void, params: []}
+  - {name: webos_heartbeat, result: void, params: []}
+extensions:
+  - name: webos.http/1
+    capability: network
+    functions: [web_http_request]
+limits:
+  max_io_bytes: 65536
+  max_path_bytes: 255
+version_export:
+  name: webos_abi_version
+  encoding: "(major << 16) | minor"

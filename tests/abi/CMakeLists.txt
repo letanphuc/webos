@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(webos_abi_test)
+target_include_directories(app PRIVATE ../../app/src ../../sdk/c)
+target_sources(app PRIVATE src/main.c ../../app/src/services/app/app_context.c)

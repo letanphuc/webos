@@ -67,7 +67,9 @@ WebOS is not a browser or a desktop operating system. It is a small device runti
 - WASM applications loaded from `/STORAGE:/apps/`
 - GPIO exposed through `/dev/gpio/<pin>/value` and `/direction`
 - RGB LED exposed through `/dev/led/<pin>/color`
-- Binary-safe filesystem ABI shared by all sample applications
+- Versioned, binary-safe WebOS ABI 1.0 with generated C and Rust bindings
+- Application-scoped path and network policy contexts for WASM host calls
+- Bounded outbound HTTP/HTTPS requests from WASM applications
 - Firmware OTA, buffered logs, remote shell, and component health reporting
 - One-command sample build, upload, and execution with `wdb`
 
@@ -264,21 +266,39 @@ Available examples:
 | `blink` | Blinks a GPIO through devfs |
 | `native_blink` | Alternative GPIO/devfs example |
 | `led_colors` | Cycles the RGB LED through color combinations |
+| `sudoku` | Fetches a Sudoku puzzle through the outbound HTTPS extension |
 
 ## WASM Host ABI
 
-The current SDK exposes generic runtime helpers and explicit-length filesystem operations:
+WebOS ABI 1.0 defines six hardware-neutral core calls:
 
 ```c
-void sleep_ms(unsigned int ms);
-void log_print(const char* message);
-int dev_fs_write(const char* path, const void* data, unsigned int length);
-int dev_fs_read(const char* path, void* data, unsigned int capacity);
+void webos_log(unsigned int level, const void* data, unsigned int length);
+void webos_sleep_ms(unsigned int milliseconds);
+int webos_read(const char* path, void* data, unsigned int capacity);
+int webos_write(const char* path, const void* data, unsigned int length);
+void webos_ready(void);
+void webos_heartbeat(void);
 ```
 
-Hardware-specific native calls are intentionally not exported. WASM applications access GPIO, LEDs, and future devices only through `dev_fs_read()` and `dev_fs_write()` using paths under `/dev`. This keeps applications independent of Zephyr driver APIs and ensures that the shell, HTTP interface, `wdb`, and WASM all use the same device contract.
+`abi/webos-v1.yaml` is the canonical definition. `scripts/generate_abi.py` produces `sdk/c/webos.h`, `sdk/rust/webos.rs`, and the binary ABI metadata consumed by C sample builds. Run `python3 scripts/generate_abi.py --check` to detect stale generated bindings. Every v1 payload carries immutable `webos.abi` custom-section metadata; firmware validates it before instantiating the module and rejects unsupported major or newer minor versions.
 
-`dev_fs_read()` returns the number of bytes read and does not append a string terminator. Applications should reserve and append their own terminator when treating the result as text.
+All buffers use explicit lengths, reads never append a terminator, host errors use stable WebOS codes rather than Zephyr errno values, and every native memory range is validated before access. Host calls receive an application context that bounds I/O, scopes private storage, filters devfs paths, gates network origins, and records readiness and heartbeat timestamps. See `doc/abi-v1.md` for ownership, path encoding, compatibility, errors, lifecycle behavior, and extension rules.
+
+The current `iwasm exec` shell path is a transitional development launcher: it deliberately grants `/dev`, `/STORAGE:/apps`, and HTTP/HTTPS access because it does not yet install a package manifest. Production package execution must replace those broad grants with the package ID and declared capabilities. Payloads built before ABI metadata was introduced must be rebuilt; legacy import aliases remain only as source-level migration aids.
+
+### Outbound HTTP Extension
+
+WASM applications can make bounded HTTP and HTTPS requests with the optional C `web_http_request()` extension. Callers supply explicit lengths for the URL, headers, request body, response buffer, and response structure. Firmware limits URL, header, body, response, and timeout sizes through `CONFIG_WEBOS_WASM_HTTP_*` settings. The response reports the status code, captured body length, declared content length, and truncation flags.
+
+The `sudoku` sample demonstrates HTTPS without embedding credentials in source control:
+
+```sh
+export API_NINJAS_KEY="your-api-key"
+wdb app run webos/sampleapps/sudoku -- "$API_NINJAS_KEY"
+```
+
+HTTPS currently trusts servers chaining to Amazon Root CA 1. The extension is not part of the ABI 1.0 core, and package-derived origin grants, a broader configurable trust store, and end-to-end DNS/connect/TLS deadlines remain required before untrusted payloads are supported.
 
 ## Device Commands
 

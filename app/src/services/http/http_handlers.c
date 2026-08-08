@@ -17,6 +17,7 @@
 #include "services/log_buffer/log_buffer.h"
 #include "services/ota/ota.h"
 #include "utils/json/json.h"
+#include "webos.h"
 
 LOG_MODULE_REGISTER(webos_http_handlers, LOG_LEVEL_DBG);
 
@@ -47,7 +48,7 @@ static int health_handler(struct http_client_ctx* client, enum http_transaction_
   ARG_UNUSED(client);
   ARG_UNUSED(request_ctx);
   ARG_UNUSED(user_data);
-  static char body[192];
+  static char body[224];
 
   if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
     const struct webos_health_status* health = webos_health_get();
@@ -55,9 +56,9 @@ static int health_handler(struct http_client_ctx* client, enum http_transaction_
                    health->iwasm == 0 && health->wifi == 0;
     int len = snprintk(body, sizeof(body),
                        "{\"status\":\"%s\",\"filesystem\":%d,\"devfs\":%d,\"gpio\":%d,"
-                       "\"led\":%d,\"iwasm\":%d,\"wifi\":%d}\n",
+                       "\"led\":%d,\"iwasm\":%d,\"wifi\":%d,\"abi\":\"%u.%u\"}\n",
                        healthy ? "ok" : "degraded", health->filesystem, health->devfs, health->gpio, health->led,
-                       health->iwasm, health->wifi);
+                       health->iwasm, health->wifi, WEBOS_ABI_MAJOR, WEBOS_ABI_MINOR);
 
     set_json_response(response_ctx, HTTP_200_OK, body, len);
   }

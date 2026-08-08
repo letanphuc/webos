@@ -1,5 +1,7 @@
 WASI_SDK ?= $(HOME)/.local/share/wasi-sdk
 CC := $(WASI_SDK)/bin/clang
+OBJCOPY := $(WASI_SDK)/bin/llvm-objcopy
+ABI_METADATA := ../../sdk/webos-abi-v1.bin
 SRC ?= main.c
 
 CFLAGS ?= -O3 --target=wasm32-wasip1 -fvisibility=default
@@ -19,8 +21,9 @@ LDFLAGS := \
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) ../include/webos.h
+$(TARGET): $(SRC) ../include/webos.h $(ABI_METADATA)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+	$(OBJCOPY) --add-section .custom_section.webos.abi=$(ABI_METADATA) $@
 
 clean:
 	rm -f $(TARGET)

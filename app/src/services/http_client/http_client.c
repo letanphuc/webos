@@ -33,6 +33,7 @@ struct parsed_url {
   char port[6];
   char uri[WEB_HTTP_MAX_URI_LEN];
   bool tls;
+  bool explicit_port;
 };
 
 struct response_context {
@@ -96,6 +97,8 @@ static int parse_url(const char* url, struct parsed_url* output) {
 
   if ((parsed.field_set & (1U << UF_PORT)) != 0) {
     uint16_t port = parsed.port;
+
+    output->explicit_port = true;
 
     if (port == 0) {
       return -EINVAL;
@@ -368,6 +371,7 @@ int32_t webos_http_request(uint32_t method, const char* url, const char* headers
   request.method = http_method;
   request.url = parsed.uri;
   request.host = parsed.host;
+  request.port = parsed.explicit_port ? parsed.port : NULL;
   request.protocol = "HTTP/1.1";
   request.payload = (const char*)request_body;
   request.payload_len = request_body_len;

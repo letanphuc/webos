@@ -1,5 +1,7 @@
 #include "webos.h"
 
+WEBOS_DECLARE_ABI_VERSION()
+
 static const char* color_names[] = {
     "000", "001", "010", "011", "100", "101", "110", "111",
 };
@@ -27,14 +29,14 @@ int main(int argc, char** argv) {
       };
 
       log_print(color_names[value]);
-      dev_fs_write(path, rgb, sizeof(rgb));
-      sleep_ms(delay_ms);
+      webos_write(path, rgb, sizeof(rgb));
+      webos_sleep_ms(delay_ms);
     }
   }
 
   {
     unsigned char off = 0;
-    dev_fs_write(path, &off, sizeof(off));
+    webos_write(path, &off, sizeof(off));
   }
 
   log_print("led_colors: done");

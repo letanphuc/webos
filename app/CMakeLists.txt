@@ -5,17 +5,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.20.0)
+set(WAMR_BUILD_LOAD_CUSTOM_SECTION 1)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(app)
 
-target_include_directories(app PRIVATE src)
+target_include_directories(app PRIVATE src ../sdk/c)
 
 target_sources(app PRIVATE
   src/main.c
   src/utils/json/json.c
   src/hal/wifi/wifi.c
   src/services/fs/fs.c
+  src/services/app/app_context.c
   src/services/ota/ota.c
   src/services/http/http.c
   src/services/http/http_handlers.c

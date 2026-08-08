@@ -1,0 +1,8 @@
+[package]
+name = "webos_abi_conformance"
+version = "1.0.0"
+edition = "2024"
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "s"
