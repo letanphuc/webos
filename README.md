@@ -1,12 +1,62 @@
 # WebOS
 
-WebOS is an offline-first application runtime for ESP32-S3 devices. It keeps a stable Zephyr host firmware on the device while small WebAssembly applications are built, installed, and replaced without reflashing the operating system.
+## Introduction
 
-The project combines Zephyr, WAMR, persistent FatFS storage, virtual hardware files, MCUboot OTA, and the `webdb` development tool into a fast embedded application workflow.
+WebOS is an embedded application platform for the ESP32-S3, built with Zephyr and WebAssembly. It separates the firmware that operates the device from the applications that define its behavior, so you can deploy, run, and replace an application without modifying the base source code or reflashing the whole system.
+
+In a conventional embedded project, application logic, hardware drivers, networking, storage, and the RTOS are compiled into one firmware image. Even a small application change requires rebuilding and flashing that image. WebOS keeps those responsibilities separate:
+
+- **Zephyr host firmware** owns boot, Wi-Fi, storage, hardware drivers, OTA, recovery, logging, and resource control.
+- **WebAssembly applications** contain product behavior and are loaded from the device filesystem at runtime by WAMR.
+- **[`webdb`](https://github.com/letanphuc/webos-webdb)** builds, uploads, starts, and observes applications from the development machine.
+
+The result is an application workflow closer to deploying software than programming firmware:
 
 ```text
-edit app -> webdb app run -> upload WASM -> execute on device -> read logs
+edit application
+      -> build WASM
+      -> upload over Wi-Fi
+      -> execute on the device
+      -> inspect logs and iterate
 ```
+
+A new application does not need its own Zephyr tree, board configuration, network stack, or flash layout. It targets the small WebOS ABI, compiles to a portable `.wasm` payload, and uses services already provided by the host. The base firmware can evolve independently through MCUboot OTA, while applications can be installed or replaced in seconds.
+
+### Hardware As Files
+
+WebOS exposes device drivers through a virtual `/dev` filesystem. Hardware resources appear as ordinary paths instead of application-specific driver calls:
+
+```text
+/dev/gpio/2/direction
+/dev/gpio/2/value
+/dev/led/48/color
+```
+
+Applications control hardware by reading and writing these files. For example, writing `out` to a GPIO's `direction` file configures the pin, writing `1` to its `value` file drives it high, and writing three RGB bytes to an LED's `color` file updates the LED.
+
+This file-oriented model creates one consistent interface across the system. The same path can be accessed by a WASM application, the Zephyr shell, an HTTP operation, or `webdb`. Drivers remain in trusted native firmware, while applications depend on stable names and data formats rather than board-specific Zephyr APIs.
+
+```text
+WASM application ─┐
+Zephyr shell ──────┼── read/write ──> /dev ──> native Zephyr driver ──> hardware
+webdb / HTTP ──────┘
+```
+
+The filesystem tree is dynamic: drivers register files at runtime, parent directories are created automatically, and empty directories are removed when their last device disappears. This makes device discovery straightforward and gives future hot-plug or optional hardware the same interface as built-in peripherals.
+
+### Why WebAssembly
+
+WebAssembly provides a compact, portable application format with a clear boundary between application code and the host firmware. WebOS uses WAMR to load applications from `/STORAGE:/apps/`, connect their imported functions to the WebOS ABI, and execute them without linking them into the Zephyr image.
+
+For developers, that means:
+
+- application iterations do not require a firmware rebuild or serial flash;
+- multiple applications can share networking, storage, and hardware services;
+- host and application releases can be versioned independently;
+- applications can be written in languages that compile to WebAssembly;
+- failures can be contained and managed by a future application supervisor.
+
+WebOS is not a browser or a desktop operating system. It is a small device runtime: Zephyr provides the reliable embedded foundation, WebAssembly provides deployable applications, devfs provides a uniform hardware model, and `webdb` ties the development loop together.
 
 ## What Works Today
 
@@ -97,7 +147,7 @@ webos/
 └── tests/                  Zephyr Twister tests
 ```
 
-The workspace also contains Zephyr, MCUboot, required modules, build output, and `tools/webdb`.
+The workspace also contains Zephyr, MCUboot, required modules, build output, and [`tools/webdb`](https://github.com/letanphuc/webos-webdb). The companion `webdb` repository is fetched by west from the project entry in `west.yml`.
 
 ## Prerequisites
 
@@ -264,15 +314,19 @@ The `/health` response includes the same component status. MCUboot test images a
 
 ## Testing
 
-Run the application integration build:
+Run the complete integration test on the physical development device:
+
+```sh
+source .env
+west webos test
+```
+
+This builds and flashes the firmware, waits for the device to connect, verifies the devfs tree, exercises GPIO and RGB LED file I/O, and runs the `hello` and `led_colors` WASM applications. The command leaves GPIO low and the RGB LED off.
+
+For host-side Zephyr coverage, run the application integration build and repository test suites:
 
 ```sh
 twister_app
-```
-
-Run repository tests:
-
-```sh
 west twister -T webos/tests -v --inline-logs --integration
 ```
 

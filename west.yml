@@ -12,6 +12,10 @@ manifest:
       url-base: https://github.com/letanphuc
 
   projects:
+    - name: webos-webdb
+      remote: letanphuc
+      revision: main
+      path: tools/webdb
     - name: wasm-micro-runtime
       remote: letanphuc
       revision: main
