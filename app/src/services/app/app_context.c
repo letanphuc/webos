@@ -16,8 +16,7 @@ static bool valid_component(const char* value) {
 
 static bool prefix_boundary(const char* value, const char* prefix) {
   size_t n = strlen(prefix);
-  return n > 0 && strncmp(value, prefix, n) == 0 &&
-         (value[n] == '\0' || value[n] == '/' || prefix[n - 1] == '/');
+  return n > 0 && strncmp(value, prefix, n) == 0 && (value[n] == '\0' || value[n] == '/' || prefix[n - 1] == '/');
 }
 
 static bool valid_utf8(const char* value, size_t length) {
@@ -47,8 +46,8 @@ static bool valid_utf8(const char* value, size_t length) {
       if ((next & 0xc0) != 0x80) return false;
       codepoint = (codepoint << 6) | (next & 0x3f);
     }
-    if ((codepoint >= 0xd800 && codepoint <= 0xdfff) || codepoint > 0x10ffff ||
-        (codepoint < 0x800 && first >= 0xe0) || (codepoint < 0x10000 && first >= 0xf0))
+    if ((codepoint >= 0xd800 && codepoint <= 0xdfff) || codepoint > 0x10ffff || (codepoint < 0x800 && first >= 0xe0) ||
+        (codepoint < 0x10000 && first >= 0xf0))
       return false;
   }
   return true;
@@ -94,8 +93,7 @@ bool webos_app_url_allowed(const struct webos_app_context* context, const char* 
     const char* origin = context->http_origins[i];
     size_t n = origin == NULL ? 0 : strlen(origin);
     if (n == 1 && origin[0] == '*' &&
-        ((url_len > 7 && memcmp(url, "http://", 7) == 0) ||
-         (url_len > 8 && memcmp(url, "https://", 8) == 0)))
+        ((url_len > 7 && memcmp(url, "http://", 7) == 0) || (url_len > 8 && memcmp(url, "https://", 8) == 0)))
       return true;
     if (n && url_len >= n && memcmp(url, origin, n) == 0 &&
         (url_len == n || url[n] == '/' || url[n] == '?' || url[n] == '#'))
