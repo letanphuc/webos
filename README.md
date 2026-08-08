@@ -2,7 +2,24 @@
 
 WebOS is a Zephyr-based firmware project for ESP32-S3 devices. The goal is to keep a stable host OS on the device and run small, disposable application payloads through WebAssembly.
 
-The current tree provides Wi-Fi management, FatFS storage, devfs hardware access, OTA, and a WAMR payload runtime on ESP32-S3.
+The current tree provides Wi-Fi management, persistent FatFS storage, devfs hardware access, OTA, health reporting, and a WAMR payload runtime on ESP32-S3. The firmware and sample workflow have been validated on physical hardware.
+
+## Implemented Features
+
+- ESP32-S3 firmware with MCUboot, 8 MB PSRAM, Wi-Fi, and a flash-backed FatFS volume at `/STORAGE:`.
+- Virtual hardware files for GPIO and RGB LED access under `/dev/gpio` and `/dev/led`.
+- WAMR payload execution through `iwasm exec`, including argument forwarding.
+- Shared, binary-safe payload ABI in `sampleapps/include/webos.h`.
+- One-command sample build, upload, and execution through `webdb app run`.
+- Working `hello`, `blink`, `native_blink`, and `led_colors` WASM samples.
+- Firmware OTA through MCUboot, delayed image confirmation, component health reporting, logs, and remote shell access.
+- Automatic serial-port selection when one `/dev/tty.usbserial-*` device is connected.
+
+The device validation flow currently completes with all startup components reporting `0`:
+
+```text
+Startup: filesystem=0 devfs=0 gpio=0 led=0 iwasm=0 wifi=0 http=0
+```
 
 ## Direction
 
@@ -186,10 +203,19 @@ make -C webos/sampleapps/led_colors
 For the normal build, upload, and execute loop, run this from the workspace root:
 
 ```sh
+tools/webdb/target/debug/webdb app run webos/sampleapps/blink
 tools/webdb/target/debug/webdb app run webos/sampleapps/led_colors -- 3
 ```
 
-The command builds `led_colors.wasm`, uploads it to `/STORAGE:/apps/led_colors.wasm`, runs it through `iwasm exec`, and prints the payload output. Arguments after `--` are forwarded to the payload, with the payload path provided as `argv[0]`.
+The command builds the sample, uploads it to `/STORAGE:/apps/<name>.wasm`, runs it through `iwasm exec`, and prints the payload output. Arguments after `--` are forwarded to the payload, with the payload path provided as `argv[0]`.
+
+Useful device checks include:
+
+```sh
+tools/webdb/target/debug/webdb shell fs ls /dev
+tools/webdb/target/debug/webdb rgbled red --pin 48
+tools/webdb/target/debug/webdb log --follow
+```
 
 The shared filesystem ABI is binary-safe:
 
@@ -235,8 +261,8 @@ Keep early implementation choices aligned with `docs/idea.md`:
 - first target is ESP32-S3 with PSRAM
 - prefer WAMR AOT payloads built by the host-side compiler
 - do not add an OS memory ABI such as `os->mem` or `os->malloc()` for MVP
-- first payload path is `/apps/blink.aot`
-- first ABI should stay minimal: GPIO set, sleep milliseconds, and log print
+- sample payloads are installed under `/STORAGE:/apps/<name>.wasm`
+- keep the ABI minimal: GPIO, sleep, logging, and explicit-length filesystem I/O
 - FatFS is the planned filesystem
 - USB mass-storage mode must be exclusive with payload execution and filesystem-changing HTTP operations
 
