@@ -117,7 +117,7 @@ Sample WASM payloads live under `sampleapps/`:
 
 ```
 sampleapps/
-├── hello/main.c + Makefile             # Fibonacci WASM (non-WASI, builtin libc)
+├── hello/main.c + Makefile             # Minimal hello-world WASM payload
 ├── blink/main.c + Makefile             # LED blink via dev_fs_write /dev/gpio/N
 └── native_blink/main.c + Makefile      # Alternative devfs GPIO example
 ```

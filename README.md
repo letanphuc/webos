@@ -235,7 +235,7 @@ Available examples:
 
 | Application | Purpose |
 | --- | --- |
-| `hello` | Logs a Fibonacci sequence |
+| `hello` | Logs `hello world` |
 | `blink` | Blinks a GPIO through devfs |
 | `native_blink` | Alternative GPIO/devfs example |
 | `led_colors` | Cycles the RGB LED through color combinations |
