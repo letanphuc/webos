@@ -1,234 +1,270 @@
 # WebOS
 
-WebOS is a Zephyr-based firmware project for ESP32-S3 devices. The goal is to keep a stable host OS on the device and run small, disposable application payloads through WebAssembly.
+WebOS is an offline-first application runtime for ESP32-S3 devices. It keeps a stable Zephyr host firmware on the device while small WebAssembly applications are built, installed, and replaced without reflashing the operating system.
 
-The current tree provides Wi-Fi management, persistent FatFS storage, devfs hardware access, OTA, health reporting, and a WAMR payload runtime on ESP32-S3. The firmware and sample workflow have been validated on physical hardware.
-
-## Implemented Features
-
-- ESP32-S3 firmware with MCUboot, 8 MB PSRAM, Wi-Fi, and a flash-backed FatFS volume at `/STORAGE:`.
-- Virtual hardware files for GPIO and RGB LED access under `/dev/gpio` and `/dev/led`.
-- WAMR payload execution through `iwasm exec`, including argument forwarding.
-- Shared, binary-safe payload ABI in `sampleapps/include/webos.h`.
-- One-command sample build, upload, and execution through `webdb app run`.
-- Working `hello`, `blink`, `native_blink`, and `led_colors` WASM samples.
-- Firmware OTA through MCUboot, delayed image confirmation, component health reporting, logs, and remote shell access.
-- Automatic serial-port selection when one `/dev/tty.usbserial-*` device is connected.
-
-The device validation flow currently completes with all startup components reporting `0`:
+The project combines Zephyr, WAMR, persistent FatFS storage, virtual hardware files, MCUboot OTA, and the `webdb` development tool into a fast embedded application workflow.
 
 ```text
-Startup: filesystem=0 devfs=0 gpio=0 led=0 iwasm=0 wifi=0 http=0
+edit app -> webdb app run -> upload WASM -> execute on device -> read logs
 ```
 
-## Direction
+## What Works Today
 
-WebOS is intended to become a small WebAssembly host for ESP devices:
+- ESP32-S3 firmware with 8 MB PSRAM and MCUboot
+- Wi-Fi station connection and local HTTP management
+- Persistent flash-backed FatFS volume mounted at `/STORAGE:`
+- WAMR interpreter and AOT runtime support
+- WASM applications loaded from `/STORAGE:/apps/`
+- GPIO exposed through `/dev/gpio/<pin>/value` and `/direction`
+- RGB LED exposed through `/dev/led/<pin>/color`
+- Binary-safe filesystem ABI shared by all sample applications
+- Firmware OTA, buffered logs, remote shell, and component health reporting
+- One-command sample build, upload, and execution with `webdb`
 
-- Zephyr RTOS as the base firmware
-- ESP32-S3 with PSRAM as the first target
-- WAMR `iwasm` as the WASM runtime
-- host-side AOT compilation for payloads
-- FatFS for payload storage
-- a small first ABI for GPIO, sleep, and logging
+The current firmware and the `hello`, `blink`, and `led_colors` applications have been validated on a physical ESP32-S3 development device.
 
-See `docs/idea.md` for the architecture notes and MVP constraints.
+## Developer Experience
+
+From the west workspace root, the normal application loop is:
+
+```sh
+source .env
+tools/webdb/target/debug/webdb app run webos/sampleapps/blink
+```
+
+To pass arguments to an application:
+
+```sh
+tools/webdb/target/debug/webdb app run webos/sampleapps/led_colors -- 3
+```
+
+`webdb app run` performs the complete loop:
+
+1. Builds the selected sample with WASI SDK.
+2. Uploads `<name>.wasm` to `/STORAGE:/apps/<name>.wasm`.
+3. Runs it with `iwasm exec`.
+4. Prints the application output.
+
+No host firmware rebuild or device reflash is required.
+
+## Architecture
+
+```text
+Host
++---------------------------+
+| webdb                     |
+| build / push / run / log  |
++-------------+-------------+
+              | local HTTP
+Device        v
++---------------------------+
+| Zephyr host firmware      |
+|                           |
+|  HTTP / OTA / shell       |
+|  FatFS       /STORAGE:    |
+|  devfs       /dev         |
+|  WAMR        iwasm        |
+|  MCUboot     firmware OTA |
++-------------+-------------+
+              |
+              v
++---------------------------+
+| WASM application          |
+| webos.h native ABI        |
++---------------------------+
+```
+
+The host firmware owns networking, storage, hardware drivers, recovery, and application execution. WASM payloads remain small and disposable.
 
 ## Repository Layout
 
-This repository is a Zephyr workspace application. In the local west workspace, it lives at:
+This repository is the application/module repository inside a west workspace:
 
 ```text
-/Users/phuc/Work/webos/webos
+webos/
+├── app/                    Zephyr firmware application
+│   └── src/
+│       ├── hal/            Hardware abstraction
+│       ├── services/       Filesystem, HTTP, OTA, WAMR, logs
+│       └── utils/          Shared utilities
+├── boards/                 Out-of-tree ESP32-S3 board
+├── drivers/                GPIO and RGB LED devfs wrappers
+├── dts/                    Devicetree bindings
+├── lib/devfs/              Virtual `/dev` filesystem
+├── sampleapps/             WASM application examples and SDK
+├── doc/                    Project documentation and product plan
+├── docs/                   Architecture and implementation notes
+└── tests/                  Zephyr Twister tests
 ```
 
-Important paths:
-
-```text
-app/              Zephyr application entry point
-app/src/main.c    firmware entry point and service initialization
-docs/idea.md      product and architecture direction
-west.yml          west manifest for Zephyr and required modules
-boards/           out-of-tree board support, if needed
-drivers/          out-of-tree drivers
-lib/              out-of-tree libraries
-tests/            Twister tests
-```
-
-The west workspace root is one level above this repository:
-
-```text
-/Users/phuc/Work/webos
-```
-
-Generated build output should live at:
-
-```text
-/Users/phuc/Work/webos/build
-```
+The workspace also contains Zephyr, MCUboot, required modules, build output, and `tools/webdb`.
 
 ## Prerequisites
 
-Use a Zephyr development environment with:
+Install:
 
-- `west`
+- west
 - CMake and Ninja
-- Zephyr SDK with ESP32-S3 Xtensa toolchain support
-- Python virtual environment with Zephyr dependencies
-- `ccache` for faster rebuilds
-- ESP flashing tools, including `esptool`
+- a Zephyr SDK with the ESP32-S3 Xtensa toolchain
+- Python with the Zephyr dependencies
+- ccache
+- esptool
+- Rust and Cargo for `webdb`
+- WASI SDK 34 for sample applications
 
-This workspace expects the helper environment at `/Users/phuc/Work/webos/.env` to activate the Python venv and load `webos/app/.env`.
-
-WASM sample payloads use WASI SDK 34. The local default is:
+Sample Makefiles use this WASI SDK location by default:
 
 ```text
 ~/.local/share/wasi-sdk
 ```
 
-Override it with `WASI_SDK=/path/to/wasi-sdk` when needed.
+Override it when necessary:
+
+```sh
+WASI_SDK=/path/to/wasi-sdk make -C webos/sampleapps/blink
+```
 
 ## Workspace Setup
 
-From the workspace root:
+Create or update the west workspace from its root:
 
 ```sh
-cd /Users/phuc/Work/webos
 west init -l webos
 west update
-```
-
-Then load the workspace environment:
-
-```sh
 source .env
 ```
 
-This sets the main local variables:
+The environment configures:
 
 ```text
-WEBOS_APP_DIR=/Users/phuc/Work/webos/webos/app
-WEBOS_BUILD_DIR=/Users/phuc/Work/webos/build
 WEBOS_BOARD=webos_esp32s3/esp32s3/procpu
+WEBOS_APP_DIR=<workspace>/webos/app
+WEBOS_BUILD_DIR=<workspace>/build
 ```
 
-The default target is the repository board `webos_esp32s3/esp32s3/procpu`.
+Put local Wi-Fi credentials in the ignored `webos/app/wifi.conf` configuration fragment.
 
-## Build
-
-After sourcing the environment:
+Build the device bridge once from the workspace root:
 
 ```sh
-build
+cargo build --manifest-path tools/webdb/Cargo.toml
 ```
 
-For a clean rebuild:
+## Build And Flash
+
+After loading the workspace environment:
 
 ```sh
-rebuild
+build       # incremental firmware build
+rebuild     # pristine firmware build
+flash       # flash the existing build
+run         # build and flash
+monitor     # open the serial monitor
+menuconfig  # edit Zephyr configuration
 ```
 
-For debug config:
-
-```sh
-build -- -DEXTRA_CONF_FILE=debug.conf
-```
-
-The build helper enables Zephyr ccache by default with `USE_CCACHE=1`. To disable it for one build:
-
-```sh
-USE_CCACHE=0 build
-```
-
-## Flash And Monitor
-
-Flash the current build:
-
-```sh
-flash
-```
-
-Build and flash:
-
-```sh
-run
-```
-
-Open the ESP monitor:
-
-```sh
-monitor
-```
-
-The default serial settings are:
-
-```text
-WEBOS_PORT=/dev/tty.usbserial-130
-WEBOS_BAUD=115200
-```
-
-Override them before sourcing `.env` or before running the helper:
+Set a serial port explicitly when needed:
 
 ```sh
 WEBOS_PORT=/dev/tty.usbserial-0001 flash
 ```
 
-If the configured port is absent and exactly one `/dev/tty.usbserial-*` device is connected, `flash` and `monitor` select it automatically.
+If the configured port is missing and exactly one `/dev/tty.usbserial-*` device exists, `flash` and `monitor` select it automatically.
 
-## Configuration
+## Build A WASM Application
 
-Open Zephyr menuconfig for the current build directory:
+All sample applications use the shared ABI header at `sampleapps/include/webos.h` and build rules from `sampleapps/common.mk`.
 
-```sh
-menuconfig
-```
-
-The application config is in:
-
-```text
-app/prj.conf
-app/debug.conf
-```
-
-Application features are configured in `app/prj.conf`; local Wi-Fi credentials belong in the ignored `app/wifi.conf` fragment.
-
-## Payload Development
-
-All payloads include the shared native ABI in `sampleapps/include/webos.h` and use `sampleapps/common.mk`. Build an individual payload with:
+Build one directly:
 
 ```sh
-make -C webos/sampleapps/led_colors
+make -C webos/sampleapps/blink
 ```
 
-For the normal build, upload, and execute loop, run this from the workspace root:
+Available examples:
 
-```sh
-tools/webdb/target/debug/webdb app run webos/sampleapps/blink
-tools/webdb/target/debug/webdb app run webos/sampleapps/led_colors -- 3
-```
+| Application | Purpose |
+| --- | --- |
+| `hello` | Logs a Fibonacci sequence |
+| `blink` | Blinks a GPIO through devfs |
+| `native_blink` | Alternative GPIO/devfs example |
+| `led_colors` | Cycles the RGB LED through color combinations |
 
-The command builds the sample, uploads it to `/STORAGE:/apps/<name>.wasm`, runs it through `iwasm exec`, and prints the payload output. Arguments after `--` are forwarded to the payload, with the payload path provided as `argv[0]`.
+## Native Application ABI
 
-Useful device checks include:
-
-```sh
-tools/webdb/target/debug/webdb shell fs ls /dev
-tools/webdb/target/debug/webdb rgbled red --pin 48
-tools/webdb/target/debug/webdb log --follow
-```
-
-The shared filesystem ABI is binary-safe:
+The current SDK exports GPIO, timing, logging, and explicit-length filesystem operations:
 
 ```c
+int gpio_set(unsigned int pin, unsigned int value);
+int gpio_get(unsigned int pin);
+void sleep_ms(unsigned int ms);
+void log_print(const char* message);
 int dev_fs_write(const char* path, const void* data, unsigned int length);
 int dev_fs_read(const char* path, void* data, unsigned int capacity);
 ```
 
-`dev_fs_read()` returns the number of bytes read and does not append a string terminator.
+`dev_fs_read()` returns the number of bytes read and does not append a string terminator. Applications should reserve and append their own terminator when treating the result as text.
+
+## Device Commands
+
+Useful `webdb` commands from the workspace root:
+
+```sh
+# Inspect virtual hardware
+tools/webdb/target/debug/webdb shell fs ls /dev
+
+# Run a shell command
+tools/webdb/target/debug/webdb shell kernel uptime
+
+# Control the RGB LED
+tools/webdb/target/debug/webdb rgbled red --pin 48
+tools/webdb/target/debug/webdb rgbled off --pin 48
+
+# Read or follow buffered logs
+tools/webdb/target/debug/webdb log
+tools/webdb/target/debug/webdb log --follow
+
+# Upload a firmware update
+tools/webdb/target/debug/webdb ota build/app/zephyr/zephyr.signed.bin
+```
+
+## Filesystem And Hardware Model
+
+WebOS uses two primary filesystem namespaces:
+
+```text
+/STORAGE:/apps/       Installed WASM payloads
+/STORAGE:/config/     Device and application configuration
+/STORAGE:/logs/       Persistent log data
+/STORAGE:/ota/        Update-related files
+/STORAGE:/www/        Web assets
+/dev/gpio/            GPIO devices
+/dev/led/             LED devices
+```
+
+Examples:
+
+```text
+/dev/gpio/2/value
+/dev/gpio/2/direction
+/dev/led/48/color
+```
+
+The same device paths are available to WASM applications, the Zephyr shell, HTTP file operations, and `webdb`.
+
+## Health And Recovery
+
+At startup, WebOS reports the result of every required component:
+
+```text
+Startup: filesystem=0 devfs=0 gpio=0 led=0 iwasm=0 wifi=0 http=0
+```
+
+The `/health` response includes the same component status. MCUboot test images are confirmed only after the required local services initialize successfully, preserving rollback when a new firmware image cannot start correctly.
 
 ## Testing
 
-Run the app Twister build:
+Run the application integration build:
 
 ```sh
 twister_app
@@ -240,35 +276,26 @@ Run repository tests:
 west twister -T webos/tests -v --inline-logs --integration
 ```
 
-## Cleaning
-
-Remove the active build directory:
+Format C and C++ sources before committing:
 
 ```sh
-clean
+formatcode
 ```
 
-This removes `/Users/phuc/Work/webos/build` when the standard environment is loaded.
+## Project Direction
 
-## Current Firmware Behavior
+The current implementation proves the deploy-and-run vertical slice. The next major milestone is a managed application lifecycle with:
 
-The current app entry point is `app/src/main.c`. It initializes storage, devfs devices, WAMR, Wi-Fi, and the HTTP management service, then logs one startup status line with each component result.
+- persistent application records
+- start, stop, status, and autostart operations
+- a dedicated supervisor thread
+- crash handling and bounded restart
+- staged package installation
+- version activation and rollback
+- logical hardware capabilities instead of physical pin assumptions
 
-## MVP Constraints
+See `doc/plan.md` for the product plan, `docs/idea.md` for the original architecture direction, and `docs/ram-load-ota.md` for OTA experiments and findings.
 
-Keep early implementation choices aligned with `docs/idea.md`:
+## License
 
-- first target is ESP32-S3 with PSRAM
-- prefer WAMR AOT payloads built by the host-side compiler
-- do not add an OS memory ABI such as `os->mem` or `os->malloc()` for MVP
-- sample payloads are installed under `/STORAGE:/apps/<name>.wasm`
-- keep the ABI minimal: GPIO, sleep, logging, and explicit-length filesystem I/O
-- FatFS is the planned filesystem
-- USB mass-storage mode must be exclusive with payload execution and filesystem-changing HTTP operations
-
-## Notes For Contributors
-
-- Treat this repo as the application/module repo, not the Zephyr tree itself.
-- Keep generated build output out of `webos/app`; use `/Users/phuc/Work/webos/build`.
-- Add required Zephyr modules to `west.yml` before using subsystems that need external module repositories.
-- Prefer small, direct changes while the MVP is still being shaped.
+Apache-2.0. See `LICENSE`.

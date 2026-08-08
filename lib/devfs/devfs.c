@@ -6,31 +6,45 @@
 #include <zephyr/fs/fs_sys.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/dlist.h>
+#include <zephyr/sys/util.h>
 
 LOG_MODULE_REGISTER(devfs, CONFIG_FS_LOG_LEVEL);
 
 #define DEVFS_MOUNT_POINT "/dev"
-#define DEVFS_MAX_FILES CONFIG_WEBOS_DEVFS_MAX_FILES
-#define DEVFS_MAX_DIRS CONFIG_WEBOS_DEVFS_MAX_DIRS
+
+enum devfs_node_type {
+  DEVFS_NODE_DIR,
+  DEVFS_NODE_FILE,
+};
 
 struct devfs_node {
-  const char* path;
-  const struct devfs_file_ops* ops;
+  sys_dnode_t tree_node;
+  sys_dlist_t children;
+  struct devfs_node* parent;
+  struct devfs_file_ops ops;
   void* user_data;
+  uint16_t open_count;
+  enum devfs_node_type type;
+  char name[];
 };
 
 struct devfs_file {
-  const struct devfs_node* node;
+  struct devfs_node* node;
   void* data;
 };
 
 struct devfs_dir {
-  char path[CONFIG_WEBOS_DEVFS_MAX_PATH_LEN];
-  uint16_t pos;
+  struct devfs_node* node;
+  char last_name[CONFIG_WEBOS_DEVFS_MAX_PATH_LEN];
+  bool started;
 };
 
-static struct devfs_node nodes[DEVFS_MAX_FILES];
-static struct k_mutex nodes_lock;
+static struct devfs_node root = {
+    .children = SYS_DLIST_STATIC_INIT(&root.children),
+    .type = DEVFS_NODE_DIR,
+};
+K_MUTEX_DEFINE(tree_lock);
 
 void* devfs_file_data(struct devfs_file* file) { return file->data; }
 
@@ -48,113 +62,163 @@ static const char* normalize_path(const char* path) {
   return path;
 }
 
-static const struct devfs_node* find_node(const char* path) {
-  const char* rel = normalize_path(path);
+static int validate_path(const char* path, bool allow_trailing_slash, const char** relative) {
+  const char* rel;
+  const char* component;
+  size_t len;
 
-  for (size_t i = 0; i < ARRAY_SIZE(nodes); i++) {
-    if (nodes[i].path != NULL && strcmp(nodes[i].path, rel) == 0) {
-      return &nodes[i];
+  if (path == NULL) {
+    return -EINVAL;
+  }
+
+  rel = normalize_path(path);
+  len = strlen(rel);
+  if (len == 0 || len >= CONFIG_WEBOS_DEVFS_MAX_PATH_LEN || rel[0] != '/') {
+    return -EINVAL;
+  }
+
+  if (!allow_trailing_slash && len > 1 && rel[len - 1] == '/') {
+    return -EINVAL;
+  }
+
+  component = rel + 1;
+  while (*component != '\0') {
+    const char* slash = strchr(component, '/');
+    size_t component_len = slash == NULL ? strlen(component) : (size_t)(slash - component);
+
+    if (component_len == 0 || (component_len == 1 && component[0] == '.') ||
+        (component_len == 2 && component[0] == '.' && component[1] == '.')) {
+      return -EINVAL;
+    }
+    component = slash == NULL ? component + component_len : slash + 1;
+  }
+
+  *relative = rel;
+  return 0;
+}
+
+static struct devfs_node* find_child(struct devfs_node* parent, const char* name, size_t name_len) {
+  struct devfs_node* child;
+
+  SYS_DLIST_FOR_EACH_CONTAINER(&parent->children, child, tree_node) {
+    int cmp = strncmp(child->name, name, name_len);
+
+    if (cmp == 0 && child->name[name_len] == '\0') {
+      return child;
+    }
+    if (cmp > 0 || (cmp == 0 && child->name[name_len] != '\0')) {
+      break;
     }
   }
 
   return NULL;
 }
 
-static bool is_direct_child(const char* dir, const char* path, const char** name) {
-  const char* child;
+static struct devfs_node* alloc_node(enum devfs_node_type type, const char* name, size_t name_len) {
+  struct devfs_node* node = k_malloc(sizeof(*node) + name_len + 1);
 
-  if (strcmp(dir, "/") == 0) {
-    if (path[0] != '/') {
-      return false;
-    }
-    child = path + 1;
-  } else {
-    size_t dir_len = strlen(dir);
-
-    if (strncmp(path, dir, dir_len) != 0 || path[dir_len] != '/') {
-      return false;
-    }
-    child = path + dir_len + 1;
+  if (node == NULL) {
+    return NULL;
   }
 
-  if (child[0] == '\0' || strchr(child, '/') != NULL) {
-    return false;
-  }
-
-  *name = child;
-  return true;
+  memset(node, 0, sizeof(*node));
+  sys_dlist_init(&node->children);
+  node->type = type;
+  memcpy(node->name, name, name_len);
+  node->name[name_len] = '\0';
+  return node;
 }
 
-static bool has_child_dir(const char* dir, const char* path, const char** name, size_t* name_len) {
-  const char* child;
-  const char* slash;
+static void insert_child(struct devfs_node* parent, struct devfs_node* node) {
+  struct devfs_node* child;
 
-  if (strcmp(dir, "/") == 0) {
-    if (path[0] != '/') {
-      return false;
+  node->parent = parent;
+  SYS_DLIST_FOR_EACH_CONTAINER(&parent->children, child, tree_node) {
+    if (strcmp(node->name, child->name) < 0) {
+      sys_dlist_insert(&child->tree_node, &node->tree_node);
+      return;
     }
-    child = path + 1;
-  } else {
-    size_t dir_len = strlen(dir);
-
-    if (strncmp(path, dir, dir_len) != 0 || path[dir_len] != '/') {
-      return false;
-    }
-    child = path + dir_len + 1;
   }
-
-  slash = strchr(child, '/');
-  if (child[0] == '\0' || slash == NULL || slash == child) {
-    return false;
-  }
-
-  *name = child;
-  *name_len = (size_t)(slash - child);
-  return true;
+  sys_dlist_append(&parent->children, &node->tree_node);
 }
 
-static bool dir_exists(const char* path) {
-  const char* dir = normalize_path(path);
+static void unlink_child(struct devfs_node* node) {
+  sys_dlist_remove(&node->tree_node);
+  node->parent = NULL;
+}
 
-  if (strcmp(dir, "/") == 0 || strcmp(path, DEVFS_MOUNT_POINT) == 0) {
-    return true;
+static void prune_empty_dirs(struct devfs_node* node) {
+  while (node != &root && node->type == DEVFS_NODE_DIR && sys_dlist_is_empty(&node->children) &&
+         node->open_count == 0) {
+    struct devfs_node* parent = node->parent;
+
+    unlink_child(node);
+    k_free(node);
+    node = parent;
+  }
+}
+
+static struct devfs_node* find_node(const char* path) {
+  const char* rel;
+  const char* component;
+  struct devfs_node* node = &root;
+
+  if (validate_path(path, true, &rel) != 0) {
+    return NULL;
+  }
+  if (strcmp(rel, "/") == 0) {
+    return &root;
   }
 
-  for (size_t i = 0; i < ARRAY_SIZE(nodes); i++) {
-    const char* name;
-    size_t name_len;
+  component = rel + 1;
+  while (*component != '\0') {
+    const char* slash = strchr(component, '/');
+    size_t component_len = slash == NULL ? strlen(component) : (size_t)(slash - component);
 
-    if (nodes[i].path != NULL &&
-        (has_child_dir(dir, nodes[i].path, &name, &name_len) || is_direct_child(dir, nodes[i].path, &name))) {
-      return true;
+    node = find_child(node, component, component_len);
+    if (node == NULL || (slash != NULL && node->type != DEVFS_NODE_DIR)) {
+      return NULL;
     }
+    component = slash == NULL ? component + component_len : slash + 1;
   }
 
-  return false;
+  return node;
 }
 
 static int devfs_open(struct fs_file_t* filp, const char* fs_path, fs_mode_t flags) {
-  const struct devfs_node* node;
+  struct devfs_node* node;
   struct devfs_file* file;
   int ret;
-
-  k_mutex_lock(&nodes_lock, K_FOREVER);
-  node = find_node(fs_path);
-  k_mutex_unlock(&nodes_lock);
-  if (node == NULL) {
-    return -ENOENT;
-  }
 
   file = k_malloc(sizeof(*file));
   if (file == NULL) {
     return -ENOMEM;
   }
 
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  node = find_node(fs_path);
+  if (node == NULL) {
+    ret = -ENOENT;
+  } else if (node->type != DEVFS_NODE_FILE) {
+    ret = -EISDIR;
+  } else {
+    node->open_count++;
+    ret = 0;
+  }
+  k_mutex_unlock(&tree_lock);
+  if (ret != 0) {
+    k_free(file);
+    return ret;
+  }
+
   file->node = node;
   file->data = NULL;
-  if (node->ops->open != NULL) {
-    ret = node->ops->open(file, node->user_data, flags);
+  if (node->ops.open != NULL) {
+    ret = node->ops.open(file, node->user_data, flags);
     if (ret != 0) {
+      k_mutex_lock(&tree_lock, K_FOREVER);
+      node->open_count--;
+      k_mutex_unlock(&tree_lock);
       k_free(file);
       return ret;
     }
@@ -167,21 +231,21 @@ static int devfs_open(struct fs_file_t* filp, const char* fs_path, fs_mode_t fla
 static ssize_t devfs_read(struct fs_file_t* filp, void* dest, size_t nbytes) {
   struct devfs_file* file = filp->filep;
 
-  if (file->node->ops->read == NULL) {
+  if (file->node->ops.read == NULL) {
     return -ENOTSUP;
   }
 
-  return file->node->ops->read(file, dest, nbytes);
+  return file->node->ops.read(file, dest, nbytes);
 }
 
 static ssize_t devfs_write(struct fs_file_t* filp, const void* src, size_t nbytes) {
   struct devfs_file* file = filp->filep;
 
-  if (file->node->ops->write == NULL) {
+  if (file->node->ops.write == NULL) {
     return -ENOTSUP;
   }
 
-  return file->node->ops->write(file, src, nbytes);
+  return file->node->ops.write(file, src, nbytes);
 }
 
 static int devfs_lseek(struct fs_file_t* filp, off_t off, int whence) { return 0; }
@@ -192,124 +256,98 @@ static int devfs_close(struct fs_file_t* filp) {
   struct devfs_file* file = filp->filep;
   int ret = 0;
 
-  if (file->node->ops->close != NULL) {
-    ret = file->node->ops->close(file);
+  if (file->node->ops.close != NULL) {
+    ret = file->node->ops.close(file);
   }
+
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  file->node->open_count--;
+  k_mutex_unlock(&tree_lock);
   k_free(file);
   filp->filep = NULL;
   return ret;
 }
 
 static int devfs_stat(struct fs_mount_t* mountp, const char* path, struct fs_dirent* entry) {
-  k_mutex_lock(&nodes_lock, K_FOREVER);
-  if (find_node(path) != NULL) {
-    k_mutex_unlock(&nodes_lock);
-    entry->type = FS_DIR_ENTRY_FILE;
-    entry->size = 0;
-    return 0;
-  }
+  struct devfs_node* node;
 
-  if (dir_exists(path)) {
-    k_mutex_unlock(&nodes_lock);
-    entry->type = FS_DIR_ENTRY_DIR;
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  node = find_node(path);
+  if (node != NULL) {
+    entry->type = node->type == DEVFS_NODE_DIR ? FS_DIR_ENTRY_DIR : FS_DIR_ENTRY_FILE;
     entry->size = 0;
-    return 0;
   }
-  k_mutex_unlock(&nodes_lock);
+  k_mutex_unlock(&tree_lock);
 
-  return -ENOENT;
+  return node == NULL ? -ENOENT : 0;
 }
 
 static int devfs_opendir(struct fs_dir_t* dirp, const char* fs_path) {
   struct devfs_dir* dir;
-  const char* rel = normalize_path(fs_path);
-
-  k_mutex_lock(&nodes_lock, K_FOREVER);
-  if (!dir_exists(fs_path)) {
-    k_mutex_unlock(&nodes_lock);
-    return -ENOENT;
-  }
-  k_mutex_unlock(&nodes_lock);
+  struct devfs_node* node;
+  int ret;
 
   dir = k_malloc(sizeof(*dir));
   if (dir == NULL) {
     return -ENOMEM;
   }
 
-  strncpy(dir->path, rel, sizeof(dir->path) - 1);
-  dir->path[sizeof(dir->path) - 1] = '\0';
-  dir->pos = 0;
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  node = find_node(fs_path);
+  if (node == NULL) {
+    ret = -ENOENT;
+  } else if (node->type != DEVFS_NODE_DIR) {
+    ret = -ENOTDIR;
+  } else {
+    node->open_count++;
+    ret = 0;
+  }
+  k_mutex_unlock(&tree_lock);
+  if (ret != 0) {
+    k_free(dir);
+    return ret;
+  }
+
+  dir->node = node;
+  dir->last_name[0] = '\0';
+  dir->started = false;
   dirp->dirp = dir;
   return 0;
 }
 
 static int devfs_readdir(struct fs_dir_t* dirp, struct fs_dirent* entry) {
   struct devfs_dir* dir = dirp->dirp;
-  uint16_t seen_dirs = 0;
-  uint16_t pos = 0;
-  const char* dir_names[DEVFS_MAX_DIRS];
-  size_t dir_name_lens[DEVFS_MAX_DIRS];
+  struct devfs_node* child;
 
   entry->name[0] = '\0';
-  k_mutex_lock(&nodes_lock, K_FOREVER);
-  for (size_t i = 0; i < ARRAY_SIZE(nodes); i++) {
-    const char* name;
-    size_t name_len;
-    bool duplicate = false;
-
-    if (nodes[i].path == NULL || !has_child_dir(dir->path, nodes[i].path, &name, &name_len)) {
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  SYS_DLIST_FOR_EACH_CONTAINER(&dir->node->children, child, tree_node) {
+    if (dir->started && strcmp(child->name, dir->last_name) <= 0) {
       continue;
     }
 
-    for (uint16_t j = 0; j < seen_dirs; j++) {
-      if (dir_name_lens[j] == name_len && strncmp(dir_names[j], name, name_len) == 0) {
-        duplicate = true;
-        break;
-      }
-    }
-    if (duplicate) {
-      continue;
-    }
-    if (seen_dirs < ARRAY_SIZE(dir_names)) {
-      dir_names[seen_dirs] = name;
-      dir_name_lens[seen_dirs] = name_len;
-      seen_dirs++;
-    }
-
-    if (pos++ == dir->pos) {
-      entry->type = FS_DIR_ENTRY_DIR;
-      entry->size = 0;
-      snprintk(entry->name, sizeof(entry->name), "%.*s", (int)name_len, name);
-      dir->pos++;
-      k_mutex_unlock(&nodes_lock);
-      return 0;
-    }
+    entry->type = child->type == DEVFS_NODE_DIR ? FS_DIR_ENTRY_DIR : FS_DIR_ENTRY_FILE;
+    entry->size = 0;
+    strncpy(entry->name, child->name, sizeof(entry->name) - 1);
+    entry->name[sizeof(entry->name) - 1] = '\0';
+    strncpy(dir->last_name, child->name, sizeof(dir->last_name) - 1);
+    dir->last_name[sizeof(dir->last_name) - 1] = '\0';
+    dir->started = true;
+    break;
   }
-
-  for (size_t i = 0; i < ARRAY_SIZE(nodes); i++) {
-    const char* name;
-
-    if (nodes[i].path == NULL || !is_direct_child(dir->path, nodes[i].path, &name)) {
-      continue;
-    }
-
-    if (pos++ == dir->pos) {
-      entry->type = FS_DIR_ENTRY_FILE;
-      entry->size = 0;
-      strncpy(entry->name, name, sizeof(entry->name) - 1);
-      entry->name[sizeof(entry->name) - 1] = '\0';
-      dir->pos++;
-      k_mutex_unlock(&nodes_lock);
-      return 0;
-    }
-  }
-  k_mutex_unlock(&nodes_lock);
+  k_mutex_unlock(&tree_lock);
 
   return 0;
 }
 
 static int devfs_closedir(struct fs_dir_t* dirp) {
-  k_free(dirp->dirp);
+  struct devfs_dir* dir = dirp->dirp;
+
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  dir->node->open_count--;
+  prune_empty_dirs(dir->node);
+  k_mutex_unlock(&tree_lock);
+  k_free(dir);
   dirp->dirp = NULL;
   return 0;
 }
@@ -342,55 +380,89 @@ static struct fs_mount_t devfs_mount_pt = {
 };
 
 int devfs_register_file(const char* path, const struct devfs_file_ops* ops, void* user_data) {
-  int free_idx = -1;
+  const char* rel;
+  const char* component;
+  struct devfs_node* parent = &root;
+  int ret;
 
-  if (path == NULL || path[0] != '/' || ops == NULL) {
+  if (ops == NULL) {
     return -EINVAL;
   }
 
-  k_mutex_lock(&nodes_lock, K_FOREVER);
-  for (size_t i = 0; i < ARRAY_SIZE(nodes); i++) {
-    if (nodes[i].path != NULL && strcmp(nodes[i].path, path) == 0) {
-      k_mutex_unlock(&nodes_lock);
-      return -EEXIST;
-    }
-    if (nodes[i].path == NULL && free_idx < 0) {
-      free_idx = (int)i;
-    }
+  ret = validate_path(path, false, &rel);
+  if (ret != 0 || strcmp(rel, "/") == 0) {
+    return -EINVAL;
   }
 
-  if (free_idx < 0) {
-    k_mutex_unlock(&nodes_lock);
-    return -ENOMEM;
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  component = rel + 1;
+  while (*component != '\0') {
+    const char* slash = strchr(component, '/');
+    size_t component_len = slash == NULL ? strlen(component) : (size_t)(slash - component);
+    enum devfs_node_type type = slash == NULL ? DEVFS_NODE_FILE : DEVFS_NODE_DIR;
+    struct devfs_node* node = find_child(parent, component, component_len);
+
+    if (node != NULL) {
+      if (slash == NULL) {
+        ret = node->type == DEVFS_NODE_FILE ? -EEXIST : -EISDIR;
+        goto out;
+      }
+      if (node->type != DEVFS_NODE_DIR) {
+        ret = -ENOTDIR;
+        goto out;
+      }
+    } else {
+      node = alloc_node(type, component, component_len);
+      if (node == NULL) {
+        ret = -ENOMEM;
+        goto out;
+      }
+      insert_child(parent, node);
+    }
+
+    parent = node;
+    component = slash == NULL ? component + component_len : slash + 1;
   }
 
-  nodes[free_idx].path = path;
-  nodes[free_idx].ops = ops;
-  nodes[free_idx].user_data = user_data;
-  k_mutex_unlock(&nodes_lock);
-  return 0;
+  parent->ops = *ops;
+  parent->user_data = user_data;
+  ret = 0;
+
+out:
+  if (ret != 0) {
+    prune_empty_dirs(parent);
+  }
+  k_mutex_unlock(&tree_lock);
+  return ret;
 }
 
 int devfs_unregister_file(const char* path) {
-  k_mutex_lock(&nodes_lock, K_FOREVER);
-  for (size_t i = 0; i < ARRAY_SIZE(nodes); i++) {
-    if (nodes[i].path != NULL && strcmp(nodes[i].path, path) == 0) {
-      nodes[i].path = NULL;
-      nodes[i].ops = NULL;
-      nodes[i].user_data = NULL;
-      k_mutex_unlock(&nodes_lock);
-      return 0;
-    }
+  struct devfs_node* node;
+  struct devfs_node* parent;
+  int ret;
+
+  k_mutex_lock(&tree_lock, K_FOREVER);
+  node = find_node(path);
+  if (node == NULL) {
+    ret = -ENOENT;
+  } else if (node->type != DEVFS_NODE_FILE) {
+    ret = -EISDIR;
+  } else if (node->open_count != 0) {
+    ret = -EBUSY;
+  } else {
+    parent = node->parent;
+    unlink_child(node);
+    k_free(node);
+    prune_empty_dirs(parent);
+    ret = 0;
   }
-  k_mutex_unlock(&nodes_lock);
-  return -ENOENT;
+  k_mutex_unlock(&tree_lock);
+  return ret;
 }
 
 int devfs_register(void) {
-  int ret;
+  int ret = fs_register(WEBOS_DEVFS_TYPE, &devfs_ops);
 
-  k_mutex_init(&nodes_lock);
-  ret = fs_register(WEBOS_DEVFS_TYPE, &devfs_ops);
   if (ret != 0) {
     LOG_ERR("devfs register failed: %d", ret);
     return ret;

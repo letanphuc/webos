@@ -6,17 +6,7 @@ config WEBOS_DEVFS
 	select FILE_SYSTEM
 	help
 	  Mount a virtual /dev filesystem. Device wrappers register files
-	  under this filesystem.
-
-config WEBOS_DEVFS_MAX_FILES
-	int "Maximum devfs files"
-	default 32
-	depends on WEBOS_DEVFS
-
-config WEBOS_DEVFS_MAX_DIRS
-	int "Maximum devfs directories per listing"
-	default 16
-	depends on WEBOS_DEVFS
+	  dynamically; parent directories are created and pruned automatically.
 
 config WEBOS_DEVFS_MAX_PATH_LEN
 	int "Maximum devfs path length"

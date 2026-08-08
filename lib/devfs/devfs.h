@@ -22,6 +22,8 @@ void devfs_file_set_data(struct devfs_file* file, void* data);
 
 int devfs_register(void);
 int devfs_unregister(void);
+
+/* Paths are copied; user_data must remain valid until unregister succeeds. */
 int devfs_register_file(const char* path, const struct devfs_file_ops* ops, void* user_data);
 int devfs_unregister_file(const char* path);
 

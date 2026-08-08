@@ -1,0 +1,8 @@
+common:
+  tags:
+    - devfs
+  integration_platforms:
+    - qemu_x86
+
+tests:
+  lib.devfs: {}

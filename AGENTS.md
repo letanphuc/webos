@@ -14,6 +14,7 @@
 - The manifest allowlist currently pulls only `zephyr`, `hal_espressif`, `mbedtls`, and `mcuboot`; add modules in `west.yml` before using other Zephyr subsystems that require external modules.
 - The target board is `esp32s3_devkitc/esp32s3/procpu` (was `esp32s3_devkitm`; Zephyr maps the deprecated name automatically).
 - After `source .env`, use `build`, `rebuild`, `flash`, `run`, `monitor`, `menuconfig`, `clean`, and `twister_app` from the workspace root.
+- Always finish code validation with `source .env && west webos test`; it builds and flashes the current firmware, then exercises devfs, GPIO, RGB LED, and WASM applications on the physical development device. Host-only builds and emulated tests are not sufficient.
 - Standard device workflow from the workspace root:
   - Incremental build: `source .env && build`
   - Clean rebuild after Zephyr/MCUboot/config branch changes: `source .env && rebuild`
@@ -22,7 +23,7 @@
   - Interactive UART logs: `source .env && monitor`
   - Timed UART logs: `gtimeout 20s script -q /dev/null bash -c 'source .env && WEBOS_PORT=/dev/tty.usbserial-130 monitor'`
   - Build with explicit device port: `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`
-- `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud. The flash helper uses `WEBOS_BAUD=460800`; the current frequently used device is `/dev/tty.usbserial-130`.
+- `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud. The flash helper uses `WEBOS_BAUD=2000000`; the current frequently used device is `/dev/tty.usbserial-130`.
 - If flashing fails with `Resource busy`, close any monitor session and check both serial aliases with `lsof /dev/tty.usbserial-130 /dev/cu.usbserial-130`, then retry `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`.
 - For device-side HTTP, shell, file push, log, OTA, and WASM smoke tests, use `webdb` from the workspace root after `source .env`, e.g. `tools/webdb/target/debug/webdb shell fs ls /dev` or `tools/webdb/target/debug/webdb shell iwasm exec /STORAGE:/apps/blink2.wasm 2`.
 - Avoid raw `curl` and custom Python snippets for device HTTP/shell testing; use `tools/webdb/target/debug/webdb ...` so host/device interactions follow the repo-supported path.
@@ -151,7 +152,7 @@ sampleapps/
 
 ## Known Bugs
 
-- RGB LED control is not physically working as expected. The `webos,rgbled` devfs wrapper and host command path can write/read `/dev/rgbled/48/color`, and `led_strip_update_rgb()` returns success, but the onboard RGB LED remains on or shows the wrong color. Tested approaches included custom GPIO bit-banging, Zephyr `worldsemi,ws2812-spi` on `spi2`/`spi3`, GPIO48 as `SPIM3_MOSI_GPIO48`, 7 MHz 8-bit WS2812C frames, 2.4 MHz 3-bit WS2812 frames, and `reset-delay = <300>`. Treat this as unresolved pin-routing/timing/hardware mapping work; do not assume GPIO48 + SPI currently drives the physical LED correctly. Next likely test is the vendor/example data pin GPIO14 or checking the board schematic/logic analyzer trace.
+- RGB LED control uses the Zephyr LED strip `worldsemi,ws2812-i2s` driver on I2S0 SD GPIO48, matching the working `samples/drivers/led/led_strip` ESP32-S3 overlay. The WebOS devfs wrapper is `webos,led` and exposes `/dev/led/48/color`.
 
 ## WebOS MVP Constraints
 
