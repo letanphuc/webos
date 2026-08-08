@@ -105,19 +105,21 @@ static void host_webos_sleep_ms(wasm_exec_env_t exec_env, uint32_t ms) { k_sleep
 
 static void host_webos_log(wasm_exec_env_t exec_env, uint32_t level, const uint8_t* data, uint32_t length) {
   struct webos_app_context* context = app_context(exec_env);
+  const char* message = length == 0 ? "" : (const char*)data;
+
   if (context == NULL || length > context->max_io_bytes || !valid_range(exec_env, data, length)) return;
   switch (level) {
     case WEBOS_LOG_ERROR:
-      LOG_HEXDUMP_ERR(data, length, context->id);
+      LOG_ERR("%s: %.*s", context->id, (int)length, message);
       break;
     case WEBOS_LOG_WARN:
-      LOG_HEXDUMP_WRN(data, length, context->id);
+      LOG_WRN("%s: %.*s", context->id, (int)length, message);
       break;
     case WEBOS_LOG_DEBUG:
-      LOG_HEXDUMP_DBG(data, length, context->id);
+      LOG_DBG("%s: %.*s", context->id, (int)length, message);
       break;
     default:
-      LOG_HEXDUMP_INF(data, length, context->id);
+      LOG_INF("%s: %.*s", context->id, (int)length, message);
       break;
   }
 }

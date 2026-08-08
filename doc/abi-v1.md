@@ -29,7 +29,7 @@ prefixes. Hardware details are represented by logical files, not ABI functions.
 
 ## Core functions
 
-- `webos_log(level, data, length)` emits a binary-safe borrowed message at levels 1 error, 2 warn,
+- `webos_log(level, data, length)` emits a borrowed text message at levels 1 error, 2 warn,
   3 info, or 4 debug. Unknown levels are treated as info.
 - `webos_sleep_ms(milliseconds)` yields the application thread for at least the requested duration.
 - `webos_read(path, data, capacity)` returns bytes read or a stable negative error.
