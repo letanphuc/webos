@@ -168,8 +168,9 @@ Install:
 - Python with the Zephyr dependencies
 - ccache
 - esptool
-- Rust and Cargo for `wdb`
-- WASI SDK 34 for sample applications
+- Rust and Cargo for `wdb` and Rust sample applications
+- Rust's `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- WASI SDK 34 for C sample applications
 
 Sample Makefiles use this WASI SDK location by default:
 
@@ -245,19 +246,21 @@ With one attached USB serial device, WDB discovers the port and starts the daemo
 
 ## Build A WASM Application
 
-All sample applications use the shared ABI header at `sampleapps/include/webos.h` and build rules from `sampleapps/common.mk`.
+C sample applications use the shared ABI header at `sampleapps/include/webos.h` and build rules from `sampleapps/common.mk`. Rust samples declare the same host imports with an `extern "C"` block.
 
-Build one directly:
+Build either language directly:
 
 ```sh
 make -C webos/sampleapps/blink
+make -C webos/sampleapps/rust_hello
 ```
 
 Available examples:
 
 | Application | Purpose |
 | --- | --- |
-| `hello` | Logs `hello world` |
+| `hello` | Logs `hello world` from C |
+| `rust_hello` | Logs `hello from rust` from a `no_std` Rust application |
 | `blink` | Blinks a GPIO through devfs |
 | `native_blink` | Alternative GPIO/devfs example |
 | `led_colors` | Cycles the RGB LED through color combinations |
