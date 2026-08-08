@@ -255,6 +255,7 @@ Build either language directly:
 ```sh
 make -C webos/sampleapps/blink
 make -C webos/sampleapps/rust_hello
+make -C webos/sampleapps/rust_sudoku
 ```
 
 Available examples:
@@ -266,7 +267,8 @@ Available examples:
 | `blink` | Blinks a GPIO through devfs |
 | `native_blink` | Alternative GPIO/devfs example |
 | `led_colors` | Cycles the RGB LED through color combinations |
-| `sudoku` | Fetches a Sudoku puzzle through the outbound HTTPS extension |
+| `sudoku` | Fetches a Sudoku puzzle through the outbound HTTPS extension in C |
+| `rust_sudoku` | Fetches a Sudoku puzzle through the outbound HTTPS extension in Rust |
 
 ## WASM Host ABI
 
@@ -289,13 +291,14 @@ The current `iwasm exec` shell path is a transitional development launcher: it d
 
 ### Outbound HTTP Extension
 
-WASM applications can make bounded HTTP and HTTPS requests with the optional C `web_http_request()` extension. Callers supply explicit lengths for the URL, headers, request body, response buffer, and response structure. Firmware limits URL, header, body, response, and timeout sizes through `CONFIG_WEBOS_WASM_HTTP_*` settings. The response reports the status code, captured body length, declared content length, and truncation flags.
+WASM applications can make bounded HTTP and HTTPS requests with the optional `web_http_request()` extension available in the C and Rust SDKs. Callers supply explicit lengths for the URL, headers, request body, response buffer, and response structure. Firmware limits URL, header, body, response, and timeout sizes through `CONFIG_WEBOS_WASM_HTTP_*` settings. The response reports the status code, captured body length, declared content length, and truncation flags.
 
-The `sudoku` sample demonstrates HTTPS without embedding credentials in source control:
+The C `sudoku` and Rust `rust_sudoku` samples demonstrate HTTPS without embedding credentials in source control:
 
 ```sh
 export API_NINJAS_KEY="your-api-key"
 wdb app run webos/sampleapps/sudoku -- "$API_NINJAS_KEY"
+wdb app run webos/sampleapps/rust_sudoku -- "$API_NINJAS_KEY"
 ```
 
 HTTPS currently trusts servers chaining to Amazon Root CA 1. The extension is not part of the ABI 1.0 core, and package-derived origin grants, a broader configurable trust store, and end-to-end DNS/connect/TLS deadlines remain required before untrusted payloads are supported.

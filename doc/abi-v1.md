@@ -50,7 +50,7 @@ lifecycle calls have no result; malformed input is ignored rather than dereferen
 
 ## Optional extensions and limits
 
-Core availability never implies network access. `webos.http/1` is an optional C binding that
+Core availability never implies network access. `webos.http/1` is an optional C and Rust binding that
 preserves `web_http_request`. A production package must declare the extension and allowed origins;
 every URL is checked against its execution context, and an absent grant returns
 `WEB_HTTP_ERR_DENIED`. HTTP-specific compile-time limits currently remain firmware Kconfig values.

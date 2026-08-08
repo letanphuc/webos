@@ -65,6 +65,51 @@ for function in spec["functions"]:
     result = "" if function["result"] == "void" else f" -> {rust_types[function['result']]}"
     r += f"    pub fn {function['name']}({params}){result};\n"
 r += """}
+// Optional webos.http/1 extension; the host returns WEB_HTTP_ERR_DENIED without a grant.
+pub const WEB_HTTP_GET: u32 = 0;
+pub const WEB_HTTP_POST: u32 = 1;
+pub const WEB_HTTP_PUT: u32 = 2;
+pub const WEB_HTTP_DELETE: u32 = 3;
+pub const WEB_HTTP_PATCH: u32 = 4;
+pub const WEB_HTTP_HEAD: u32 = 5;
+pub const WEB_HTTP_OK: i32 = 0;
+pub const WEB_HTTP_ERR_INVALID: i32 = -1;
+pub const WEB_HTTP_ERR_NO_NETWORK: i32 = -2;
+pub const WEB_HTTP_ERR_DNS: i32 = -3;
+pub const WEB_HTTP_ERR_CONNECT: i32 = -4;
+pub const WEB_HTTP_ERR_TLS: i32 = -5;
+pub const WEB_HTTP_ERR_TIMEOUT: i32 = -6;
+pub const WEB_HTTP_ERR_TOO_LARGE: i32 = -7;
+pub const WEB_HTTP_ERR_IO: i32 = -8;
+pub const WEB_HTTP_ERR_DENIED: i32 = -9;
+pub const WEB_HTTP_ERR_BUSY: i32 = -10;
+pub const WEB_HTTP_ERR_UNSUPPORTED: i32 = -11;
+pub const WEB_HTTP_RESPONSE_TRUNCATED: u32 = 1 << 0;
+pub const WEB_HTTP_RESPONSE_LENGTH_UNKNOWN: u32 = 1 << 1;
+#[repr(C)]
+pub struct WebHttpResponse {
+    pub struct_size: u32,
+    pub status_code: u32,
+    pub body_len: u32,
+    pub content_length: u32,
+    pub flags: u32,
+}
+unsafe extern "C" {
+    pub fn web_http_request(
+        method: u32,
+        url: *const u8,
+        url_len: u32,
+        headers: *const u8,
+        headers_len: u32,
+        request_body: *const u8,
+        request_body_len: u32,
+        response_body: *mut u8,
+        response_capacity: u32,
+        response: *mut WebHttpResponse,
+        response_size: u32,
+        timeout_ms: u32,
+    ) -> i32;
+}
 #[macro_export]
 macro_rules! webos_declare_abi_version {
     () => {
