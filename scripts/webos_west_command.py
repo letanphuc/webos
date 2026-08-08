@@ -45,17 +45,17 @@ class WebosWestCommand(WestCommand):
     def _test(self, args):
         repo = Path(__file__).resolve().parent.parent
         workspace = repo.parent
-        webdb = workspace / "tools" / "webdb" / "target" / "debug" / "webdb"
+        wdb = workspace / "tools" / "webdb" / "target" / "debug" / "wdb"
 
-        if not webdb.is_file():
-            self.die(f"webdb not found: {webdb}")
+        if not wdb.is_file():
+            self.die(f"wdb not found: {wdb}")
 
         self.inf("Building and flashing the physical device")
         self._run(["bash", "-lc", "source .env && run"], workspace)
 
         self.inf("Waiting for the device HTTP service")
         root_listing = self._wait_for_device(
-            webdb, workspace, args.startup_timeout
+            wdb, workspace, args.startup_timeout
         )
         self._require(root_listing, "gpio/", "/dev listing")
         self._require(root_listing, "led/", "/dev listing")
@@ -63,62 +63,62 @@ class WebosWestCommand(WestCommand):
         self.inf("Testing devfs directory traversal")
         gpio_dir = f"/dev/gpio/{args.gpio_pin}/"
         led_dir = f"/dev/led/{args.led_pin}/"
-        gpio_listing = self._webdb(
-            webdb, workspace, "shell", "fs", "ls", gpio_dir
+        gpio_listing = self._wdb(
+            wdb, workspace, "shell", "fs", "ls", gpio_dir
         )
         self._require(gpio_listing, "direction", gpio_dir)
         self._require(gpio_listing, "value", gpio_dir)
-        led_listing = self._webdb(webdb, workspace, "shell", "fs", "ls", led_dir)
+        led_listing = self._wdb(wdb, workspace, "shell", "fs", "ls", led_dir)
         self._require(led_listing, "color", led_dir)
 
         self.inf("Testing GPIO file writes and readback")
         gpio_value = f"/dev/gpio/{args.gpio_pin}/value"
         try:
-            self._webdb(
-                webdb, workspace, "shell", "fs", "write", gpio_value, "01"
+            self._wdb(
+                wdb, workspace, "shell", "fs", "write", gpio_value, "01"
             )
-            high = self._webdb(
-                webdb, workspace, "shell", "fs", "cat", gpio_value
+            high = self._wdb(
+                wdb, workspace, "shell", "fs", "cat", gpio_value
             )
             self._require(high, "1", f"{gpio_value} high readback")
         finally:
-            self._webdb(
-                webdb, workspace, "shell", "fs", "write", gpio_value, "00"
+            self._wdb(
+                wdb, workspace, "shell", "fs", "write", gpio_value, "00"
             )
-        low = self._webdb(webdb, workspace, "shell", "fs", "cat", gpio_value)
+        low = self._wdb(wdb, workspace, "shell", "fs", "cat", gpio_value)
         self._require(low, "0", f"{gpio_value} low readback")
 
         self.inf("Testing RGB LED file writes and readback")
         led_color = f"/dev/led/{args.led_pin}/color"
         try:
-            self._webdb(
-                webdb, workspace, "rgbled", "--pin", str(args.led_pin), "red"
+            self._wdb(
+                wdb, workspace, "rgbled", "--pin", str(args.led_pin), "red"
             )
-            red = self._webdb(webdb, workspace, "shell", "fs", "cat", led_color)
+            red = self._wdb(wdb, workspace, "shell", "fs", "cat", led_color)
             self._require(red, "255,0,0", f"{led_color} red readback")
         finally:
-            self._webdb(
-                webdb, workspace, "rgbled", "--pin", str(args.led_pin), "off"
+            self._wdb(
+                wdb, workspace, "rgbled", "--pin", str(args.led_pin), "off"
             )
 
         self.inf("Testing WAMR applications")
-        self._webdb(webdb, workspace, "app", "run", "webos/sampleapps/hello")
-        self._webdb(
-            webdb,
+        self._wdb(wdb, workspace, "app", "run", "webos/sampleapps/hello")
+        self._wdb(
+            wdb,
             workspace,
             "app",
             "run",
             "webos/sampleapps/led_colors",
             "1",
         )
-        off = self._webdb(webdb, workspace, "shell", "fs", "cat", led_color)
+        off = self._wdb(wdb, workspace, "shell", "fs", "cat", led_color)
         self._require(off, "0,0,0", f"{led_color} final readback")
 
         self.inf("Physical-device WebOS tests passed")
 
-    def _wait_for_device(self, webdb, workspace, timeout):
+    def _wait_for_device(self, wdb, workspace, timeout):
         deadline = time.monotonic() + timeout
-        command = [str(webdb), "shell", "fs", "ls", "/dev/"]
+        command = [str(wdb), "shell", "fs", "ls", "/dev/"]
         last_error = ""
 
         while time.monotonic() < deadline:
@@ -133,8 +133,8 @@ class WebosWestCommand(WestCommand):
 
         self.die(f"device did not become ready within {timeout}s: {last_error}")
 
-    def _webdb(self, webdb, workspace, *args):
-        result = self._run([str(webdb), *args], workspace, capture_output=True)
+    def _wdb(self, wdb, workspace, *args):
+        result = self._run([str(wdb), *args], workspace, capture_output=True)
         print(result.stdout, end="")
         return result.stdout
 

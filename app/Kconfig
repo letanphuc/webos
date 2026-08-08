@@ -21,7 +21,7 @@ config WEBOS_WIFI_PSK
 	default ""
 
 config WEBOS_LOG_BUFFER
-	bool "Enable WebOS log buffer for webdb log command"
+	bool "Enable WebOS log buffer for wdb log command"
 	select LOG_OUTPUT
 	help
 	  In-memory ring buffer that captures Zephyr log output

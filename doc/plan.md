@@ -19,7 +19,7 @@ The first deploy-and-run vertical slice is working on the ESP32-S3 development d
 - [x] Stable Zephyr host firmware boots through MCUboot with external PSRAM.
 - [x] Persistent flash-backed FatFS volume mounts at `/STORAGE:` and creates the application directory layout.
 - [x] WASM payloads can be uploaded without rebuilding or reflashing the host firmware.
-- [x] `webdb app run <sample-dir> -- <args...>` builds, uploads, executes, and displays payload output in one command.
+- [x] `wdb app run <sample-dir> -- <args...>` builds, uploads, executes, and displays payload output in one command.
 - [x] WAMR loads, instantiates, and executes payloads from `/STORAGE:/apps/<name>.wasm`.
 - [x] Payload arguments are forwarded correctly, including configurable sample arguments.
 - [x] A shared payload SDK header and common build configuration define one native ABI for all samples.
@@ -27,7 +27,7 @@ The first deploy-and-run vertical slice is working on the ESP32-S3 development d
 - [x] File replacement truncates old storage content so shorter payload updates do not retain stale bytes.
 - [x] Generic devfs is mounted at `/dev` and exposes GPIO through `/dev/gpio/<pin>/{value,direction}`.
 - [x] RGB LED control is exposed through `/dev/led/48/color` and supports text and binary RGB writes.
-- [x] The same devfs paths work from WASM payloads, the Zephyr shell, and `webdb`.
+- [x] The same devfs paths work from WASM payloads, the Zephyr shell, and `wdb`.
 - [x] `hello`, `blink`, `native_blink`, and `led_colors` samples build with WASI SDK 34.
 - [x] `hello`, `blink`, and `led_colors` have been run successfully on the physical development device.
 - [x] Startup reports filesystem, devfs, GPIO, LED, WAMR, Wi-Fi, and HTTP component health.
@@ -75,7 +75,7 @@ Expand the existing `/dev` model into the standard WebOS hardware interface. Exa
 /dev/relay/0/state
 ```
 
-The same interface should be usable by WASM applications, the Zephyr shell, `webdb`, and the device web UI. Applications should not need direct knowledge of individual Zephyr driver APIs.
+The same interface should be usable by WASM applications, the Zephyr shell, `wdb`, and the device web UI. Applications should not need direct knowledge of individual Zephyr driver APIs.
 
 ### 3. Portable Capability-Based Applications
 
@@ -176,7 +176,7 @@ Example:
 }
 ```
 
-`webdb` should use this description for discovery, compatibility validation, configuration, diagnostics, and generated controls. Package requirements should be checked before installation begins.
+`wdb` should use this description for discovery, compatibility validation, configuration, diagnostics, and generated controls. Package requirements should be checked before installation begins.
 
 ### 8. Private Per-Application Storage
 
@@ -219,12 +219,12 @@ The intended ownership model includes:
 The preferred network workflow should become:
 
 ```text
-webdb discover
-webdb claim <device>
-webdb app build ./room-light
-webdb app install room-light.webpkg
-webdb app logs room-light --follow
-webdb app rollback room-light
+wdb discover
+wdb claim <device>
+wdb app build ./room-light
+wdb app install room-light.webpkg
+wdb app logs room-light --follow
+wdb app rollback room-light
 ```
 
 The equivalent offline deployment should be possible by copying `room-light.webpkg` into the USB `INSTALL/` directory and safely ejecting the volume.
@@ -248,7 +248,7 @@ These features depend on one another and should be designed as a single vertical
 - Define the application state machine and persistent active/previous records.
 - Move WAMR execution into a supervised Zephyr thread.
 - Add start, stop, status, autostart, and crash reporting.
-- Extend `webdb` with explicit application lifecycle commands.
+- Extend `wdb` with explicit application lifecycle commands.
 
 ### Phase 2: Package Format
 
@@ -281,7 +281,7 @@ The following remain required for a reliable product, but they should not be the
 - logging and health reporting;
 - a web dashboard;
 - ESP32-S3 and Zephyr support;
-- the `webdb` command-line tool;
+- the `wdb` command-line tool;
 - WebAssembly runtime integration by itself.
 
 The differentiation comes from combining these foundations with portable hardware capabilities, a managed application lifecycle, transactional rollback, and offline ownership.

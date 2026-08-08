@@ -25,13 +25,13 @@
   - Build with explicit device port: `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`
 - `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud. The flash helper uses `WEBOS_BAUD=2000000`; the current frequently used device is `/dev/tty.usbserial-130`.
 - If flashing fails with `Resource busy`, close any monitor session and check both serial aliases with `lsof /dev/tty.usbserial-130 /dev/cu.usbserial-130`, then retry `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`.
-- For device-side HTTP, shell, file push, log, OTA, and WASM smoke tests, use `webdb` from the workspace root after `source .env`, e.g. `tools/webdb/target/debug/webdb shell fs ls /dev` or `tools/webdb/target/debug/webdb shell iwasm exec /STORAGE:/apps/blink2.wasm 2`.
-- Avoid raw `curl` and custom Python snippets for device HTTP/shell testing; use `tools/webdb/target/debug/webdb ...` so host/device interactions follow the repo-supported path.
-- Common `webdb` checks after Wi-Fi connects:
-  - Health/shell smoke: `source .env && tools/webdb/target/debug/webdb shell fs ls /dev`
-  - Read logs: `source .env && tools/webdb/target/debug/webdb log`
-  - Follow logs: `source .env && tools/webdb/target/debug/webdb log --follow`
-  - OTA upload: `source .env && tools/webdb/target/debug/webdb ota build/app/zephyr/zephyr.signed.bin`
+- For device-side HTTP, shell, file push, log, OTA, and WASM smoke tests, use `wdb` from the workspace root after `source .env`, e.g. `tools/webdb/target/debug/wdb shell fs ls /dev` or `tools/webdb/target/debug/wdb shell iwasm exec /STORAGE:/apps/blink2.wasm 2`.
+- Avoid raw `curl` and custom Python snippets for device HTTP/shell testing; use `tools/webdb/target/debug/wdb ...` so host/device interactions follow the repo-supported path.
+- Common `wdb` checks after Wi-Fi connects:
+  - Health/shell smoke: `source .env && tools/webdb/target/debug/wdb shell fs ls /dev`
+  - Read logs: `source .env && tools/webdb/target/debug/wdb log`
+  - Follow logs: `source .env && tools/webdb/target/debug/wdb log --follow`
+  - OTA upload: `source .env && tools/webdb/target/debug/wdb ota build/app/zephyr/zephyr.signed.bin`
 - WiFi credentials live in `app/wifi.conf` (gitignored). `build` and `rebuild` load it via `EXTRA_CONF_FILE`. Override with `WEBOS_WIFI_SSID`/`WEBOS_WIFI_PSK` env vars.
 - For extra config fragments (e.g. debug): `build -- -DEXTRA_CONF_FILE=debug.conf`. Multiple fragments: `build -- -DEXTRA_CONF_FILE="debug.conf;other.conf"`.
 - Run application Twister builds after `source .env` with `twister_app`.
@@ -119,7 +119,7 @@ Sample WASM payloads live under `sampleapps/`:
 sampleapps/
 ├── hello/main.c + Makefile             # Fibonacci WASM (non-WASI, builtin libc)
 ├── blink/main.c + Makefile             # LED blink via dev_fs_write /dev/gpio/N
-└── native_blink/main.c + Makefile      # LED blink via native gpio_set()
+└── native_blink/main.c + Makefile      # Alternative devfs GPIO example
 ```
 
 - **`hal/`** — hardware abstraction layer. Currently `wifi/` owns the Wi-Fi connection sequence.
@@ -135,8 +135,8 @@ sampleapps/
   - `ota/` — clean API (`ota_init/begin/write/finish/abort`) with internal per-call locking; the HTTP handler never touches the flash context or mutex directly.
   - `http/` — `http.c` owns the server definition and JSON/text response helpers; `http_handlers.c` owns all five endpoint handlers (`GET /`, `GET /health`, `POST /push`, `POST /shell`, `POST /ota`) and registers them via iterable linker sections.
   - `iwasm/` — WAMR runtime lifecycle. `iwasm_init()` sets up the PSRAM-backed custom
-    allocator and registers native ABI functions (`gpio_set`, `gpio_get`, `sleep_ms`,
-    `log_print`, `dev_fs_write`, `dev_fs_read`) via `RuntimeInitArgs.native_symbols`.
+    allocator and registers runtime helpers (`sleep_ms`, `log_print`) plus the
+    device-file ABI (`dev_fs_write`, `dev_fs_read`) via `RuntimeInitArgs.native_symbols`.
     `dev_fs_write`/`dev_fs_read` wrap `fs_open`/`fs_write`/`fs_read` so WASM payloads
     can access `/dev/gpio` files via the Zephyr VFS.
 - `app/CMakeLists.txt` lists every `.c` file and adds `target_include_directories(app PRIVATE src)` so that `#include "hal/wifi/wifi.h"`-style paths work from any source file.
@@ -159,7 +159,7 @@ sampleapps/
 - MVP target is ESP32-S3 with PSRAM.
 - Prefer WAMR/iwasm AOT payloads built by the host-side WAMR AOT compiler using default flags first. (Currently interpreter-only: the prebuilt `wamrc` lacks Xtensa target; build from source with `build_llvm_xtensa.sh` when needed.)
 - Do not add an OS memory ABI such as `os->mem`, `os->malloc()`, or `os->mem->alloc_dma()`; payloads should use libc memory APIs inside WASM memory.
-- First payload is `/apps/blink.wasm`; native ABI provides `gpio_set`, `gpio_get`, `sleep_ms`, `log_print`, `dev_fs_write`, `dev_fs_read`. Payloads access `/dev/gpio` via the `dev_fs_*` wrappers (which call Zephyr VFS → devfs → GPIO driver).
+- First payload is `/apps/blink.wasm`. The WASM host ABI provides generic `sleep_ms` and `log_print` helpers plus `dev_fs_write`/`dev_fs_read`; it does not expose hardware-specific native calls. Payloads access `/dev/gpio` through the `dev_fs_*` wrappers (Zephyr VFS → devfs → GPIO driver).
 - WASI (libc-wasi) is compiled in but crashes the device during `wasm_runtime_instantiate` — a Zephyr platform incompatibility in WAMR's SSP layer. Use native imports (registered via `RuntimeInitArgs.native_symbols`) until WASI is fixed.
 - FatFS is the planned filesystem. USB mass-storage mode is exclusive: stop payloads and reject filesystem-changing HTTP operations while the host has the volume mounted.
 - The flash disk is currently RAM-backed (`CONFIG_DISK_DRIVER_RAM=y`); contents are lost on reboot. Switch to real flash partition for persistent storage.

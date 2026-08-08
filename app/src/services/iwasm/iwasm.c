@@ -4,8 +4,6 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -90,37 +88,6 @@ static void* iwasm_realloc(void* ptr, unsigned int size) {
   return new_ptr;
 }
 
-static const struct device* native_gpio_dev(uint32_t pin) {
-  if (pin <= 31) {
-    return DEVICE_DT_GET_OR_NULL(DT_NODELABEL(gpio0));
-  }
-  return DEVICE_DT_GET_OR_NULL(DT_NODELABEL(gpio1));
-}
-
-static int32_t gpio_set(wasm_exec_env_t exec_env, uint32_t pin, uint32_t value) {
-  const struct device* dev = native_gpio_dev(pin);
-  int ret;
-
-  if (!dev) {
-    return -ENODEV;
-  }
-
-  ret = gpio_pin_configure(dev, pin, GPIO_OUTPUT);
-  if (ret < 0) {
-    return ret;
-  }
-  return gpio_pin_set(dev, pin, value);
-}
-
-static int32_t gpio_get(wasm_exec_env_t exec_env, uint32_t pin) {
-  const struct device* dev = native_gpio_dev(pin);
-
-  if (!dev) {
-    return -ENODEV;
-  }
-  return gpio_pin_get(dev, pin);
-}
-
 static void sleep_ms(wasm_exec_env_t exec_env, uint32_t ms) { k_sleep(K_MSEC(ms)); }
 
 static void log_print(wasm_exec_env_t exec_env, const char* msg) {
@@ -191,9 +158,10 @@ static int32_t dev_fs_read(wasm_exec_env_t exec_env, const char* path, uint8_t* 
 }
 
 static NativeSymbol native_symbols[] = {
-    EXPORT_WASM_API_WITH_SIG(gpio_set, "(ii)i"),      EXPORT_WASM_API_WITH_SIG(gpio_get, "(i)i"),
-    EXPORT_WASM_API_WITH_SIG(sleep_ms, "(i)"),        EXPORT_WASM_API_WITH_SIG(log_print, "($)"),
-    EXPORT_WASM_API_WITH_SIG(dev_fs_write, "($*~)i"), EXPORT_WASM_API_WITH_SIG(dev_fs_read, "($*~)i"),
+    EXPORT_WASM_API_WITH_SIG(sleep_ms, "(i)"),
+    EXPORT_WASM_API_WITH_SIG(log_print, "($)"),
+    EXPORT_WASM_API_WITH_SIG(dev_fs_write, "($*~)i"),
+    EXPORT_WASM_API_WITH_SIG(dev_fs_read, "($*~)i"),
 };
 
 int iwasm_init(void) {

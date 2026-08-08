@@ -230,7 +230,7 @@ Representative log:
 
 ```text
 webos_ota: OTA flashed rel=0x21000 abs=0x41000 len=0 ret=0 time=95 ms
-webdb ota ... [====] 14% ...
+wdb ota ... [====] 14% ...
 ```
 
 The logged `len=0` was an instrumentation bug caused by printing after the buffer length was reset.

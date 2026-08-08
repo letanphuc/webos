@@ -8,7 +8,7 @@ In a conventional embedded project, application logic, hardware drivers, network
 
 - **Zephyr host firmware** owns boot, Wi-Fi, storage, hardware drivers, OTA, recovery, logging, and resource control.
 - **WebAssembly applications** contain product behavior and are loaded from the device filesystem at runtime by WAMR.
-- **[`webdb`](https://github.com/letanphuc/webos-webdb)** builds, uploads, starts, and observes applications from the development machine.
+- **[`wdb`](https://github.com/letanphuc/webos-webdb)** builds, uploads, starts, and observes applications from the development machine.
 
 The result is an application workflow closer to deploying software than programming firmware:
 
@@ -34,12 +34,12 @@ WebOS exposes device drivers through a virtual `/dev` filesystem. Hardware resou
 
 Applications control hardware by reading and writing these files. For example, writing `out` to a GPIO's `direction` file configures the pin, writing `1` to its `value` file drives it high, and writing three RGB bytes to an LED's `color` file updates the LED.
 
-This file-oriented model creates one consistent interface across the system. The same path can be accessed by a WASM application, the Zephyr shell, an HTTP operation, or `webdb`. Drivers remain in trusted native firmware, while applications depend on stable names and data formats rather than board-specific Zephyr APIs.
+This file-oriented model creates one consistent interface across the system. The same path can be accessed by a WASM application, the Zephyr shell, an HTTP operation, or `wdb`. Drivers remain in trusted native firmware, while applications depend on stable names and data formats rather than board-specific Zephyr APIs.
 
 ```text
 WASM application ─┐
 Zephyr shell ──────┼── read/write ──> /dev ──> native Zephyr driver ──> hardware
-webdb / HTTP ──────┘
+wdb / HTTP ──────┘
 ```
 
 The filesystem tree is dynamic: drivers register files at runtime, parent directories are created automatically, and empty directories are removed when their last device disappears. This makes device discovery straightforward and gives future hot-plug or optional hardware the same interface as built-in peripherals.
@@ -56,7 +56,7 @@ For developers, that means:
 - applications can be written in languages that compile to WebAssembly;
 - failures can be contained and managed by a future application supervisor.
 
-WebOS is not a browser or a desktop operating system. It is a small device runtime: Zephyr provides the reliable embedded foundation, WebAssembly provides deployable applications, devfs provides a uniform hardware model, and `webdb` ties the development loop together.
+WebOS is not a browser or a desktop operating system. It is a small device runtime: Zephyr provides the reliable embedded foundation, WebAssembly provides deployable applications, devfs provides a uniform hardware model, and `wdb` ties the development loop together.
 
 ## What Works Today
 
@@ -69,7 +69,7 @@ WebOS is not a browser or a desktop operating system. It is a small device runti
 - RGB LED exposed through `/dev/led/<pin>/color`
 - Binary-safe filesystem ABI shared by all sample applications
 - Firmware OTA, buffered logs, remote shell, and component health reporting
-- One-command sample build, upload, and execution with `webdb`
+- One-command sample build, upload, and execution with `wdb`
 
 The current firmware and the `hello`, `blink`, and `led_colors` applications have been validated on a physical ESP32-S3 development device.
 
@@ -79,16 +79,16 @@ From the west workspace root, the normal application loop is:
 
 ```sh
 source .env
-tools/webdb/target/debug/webdb app run webos/sampleapps/blink
+tools/webdb/target/debug/wdb app run webos/sampleapps/blink
 ```
 
 To pass arguments to an application:
 
 ```sh
-tools/webdb/target/debug/webdb app run webos/sampleapps/led_colors -- 3
+tools/webdb/target/debug/wdb app run webos/sampleapps/led_colors -- 3
 ```
 
-`webdb app run` performs the complete loop:
+`wdb app run` performs the complete loop:
 
 1. Builds the selected sample with WASI SDK.
 2. Uploads `<name>.wasm` to `/STORAGE:/apps/<name>.wasm`.
@@ -102,7 +102,7 @@ No host firmware rebuild or device reflash is required.
 ```text
 Host
 +---------------------------+
-| webdb                     |
+| wdb                     |
 | build / push / run / log  |
 +-------------+-------------+
               | local HTTP
@@ -147,7 +147,7 @@ webos/
 └── tests/                  Zephyr Twister tests
 ```
 
-The workspace also contains Zephyr, MCUboot, required modules, build output, and [`tools/webdb`](https://github.com/letanphuc/webos-webdb). The companion `webdb` repository is fetched by west from the project entry in `west.yml`.
+The workspace also contains Zephyr, MCUboot, required modules, build output, and [`tools/webdb`](https://github.com/letanphuc/webos-webdb). The companion `wdb` repository is fetched by west from the project entry in `west.yml`.
 
 ## Prerequisites
 
@@ -159,7 +159,7 @@ Install:
 - Python with the Zephyr dependencies
 - ccache
 - esptool
-- Rust and Cargo for `webdb`
+- Rust and Cargo for `wdb`
 - WASI SDK 34 for sample applications
 
 Sample Makefiles use this WASI SDK location by default:
@@ -240,42 +240,42 @@ Available examples:
 | `native_blink` | Alternative GPIO/devfs example |
 | `led_colors` | Cycles the RGB LED through color combinations |
 
-## Native Application ABI
+## WASM Host ABI
 
-The current SDK exports GPIO, timing, logging, and explicit-length filesystem operations:
+The current SDK exposes generic runtime helpers and explicit-length filesystem operations:
 
 ```c
-int gpio_set(unsigned int pin, unsigned int value);
-int gpio_get(unsigned int pin);
 void sleep_ms(unsigned int ms);
 void log_print(const char* message);
 int dev_fs_write(const char* path, const void* data, unsigned int length);
 int dev_fs_read(const char* path, void* data, unsigned int capacity);
 ```
 
+Hardware-specific native calls are intentionally not exported. WASM applications access GPIO, LEDs, and future devices only through `dev_fs_read()` and `dev_fs_write()` using paths under `/dev`. This keeps applications independent of Zephyr driver APIs and ensures that the shell, HTTP interface, `wdb`, and WASM all use the same device contract.
+
 `dev_fs_read()` returns the number of bytes read and does not append a string terminator. Applications should reserve and append their own terminator when treating the result as text.
 
 ## Device Commands
 
-Useful `webdb` commands from the workspace root:
+Useful `wdb` commands from the workspace root:
 
 ```sh
 # Inspect virtual hardware
-tools/webdb/target/debug/webdb shell fs ls /dev
+tools/webdb/target/debug/wdb shell fs ls /dev
 
 # Run a shell command
-tools/webdb/target/debug/webdb shell kernel uptime
+tools/webdb/target/debug/wdb shell kernel uptime
 
 # Control the RGB LED
-tools/webdb/target/debug/webdb rgbled red --pin 48
-tools/webdb/target/debug/webdb rgbled off --pin 48
+tools/webdb/target/debug/wdb rgbled red --pin 48
+tools/webdb/target/debug/wdb rgbled off --pin 48
 
 # Read or follow buffered logs
-tools/webdb/target/debug/webdb log
-tools/webdb/target/debug/webdb log --follow
+tools/webdb/target/debug/wdb log
+tools/webdb/target/debug/wdb log --follow
 
 # Upload a firmware update
-tools/webdb/target/debug/webdb ota build/app/zephyr/zephyr.signed.bin
+tools/webdb/target/debug/wdb ota build/app/zephyr/zephyr.signed.bin
 ```
 
 ## Filesystem And Hardware Model
@@ -300,7 +300,7 @@ Examples:
 /dev/led/48/color
 ```
 
-The same device paths are available to WASM applications, the Zephyr shell, HTTP file operations, and `webdb`.
+The same device paths are available to WASM applications, the Zephyr shell, HTTP file operations, and `wdb`.
 
 ## Health And Recovery
 
