@@ -8,7 +8,7 @@ In a conventional embedded project, application logic, hardware drivers, network
 
 - **Zephyr host firmware** owns boot, Wi-Fi, storage, hardware drivers, OTA, recovery, logging, and resource control.
 - **WebAssembly applications** contain product behavior and are loaded from the device filesystem at runtime by WAMR.
-- **[`wdb`](https://github.com/letanphuc/webos-webdb)** builds, uploads, starts, and observes applications from the development machine.
+- **[`wdb`](https://github.com/letanphuc/webos-wdb)** builds, uploads, starts, and observes applications from the development machine.
 
 The result is an application workflow closer to deploying software than programming firmware:
 
@@ -79,13 +79,13 @@ From the west workspace root, the normal application loop is:
 
 ```sh
 source .env
-tools/webdb/target/debug/wdb app run webos/sampleapps/blink
+wdb app run webos/sampleapps/blink
 ```
 
 To pass arguments to an application:
 
 ```sh
-tools/webdb/target/debug/wdb app run webos/sampleapps/led_colors -- 3
+wdb app run webos/sampleapps/led_colors -- 3
 ```
 
 `wdb app run` performs the complete loop:
@@ -147,7 +147,7 @@ webos/
 └── tests/                  Zephyr Twister tests
 ```
 
-The workspace also contains Zephyr, MCUboot, required modules, build output, and [`tools/webdb`](https://github.com/letanphuc/webos-webdb). The companion `wdb` repository is fetched by west from the project entry in `west.yml`.
+The workspace also contains Zephyr, MCUboot, required modules, build output, and [`tools/wdb`](https://github.com/letanphuc/webos-wdb). The companion `wdb` repository is fetched by west from the project entry in `west.yml`.
 
 ## Prerequisites
 
@@ -197,7 +197,7 @@ Put local Wi-Fi credentials in the ignored `webos/app/wifi.conf` configuration f
 Build the device bridge once from the workspace root:
 
 ```sh
-cargo build --manifest-path tools/webdb/Cargo.toml
+cargo build --manifest-path tools/wdb/Cargo.toml
 ```
 
 ## Build And Flash
@@ -261,21 +261,21 @@ Useful `wdb` commands from the workspace root:
 
 ```sh
 # Inspect virtual hardware
-tools/webdb/target/debug/wdb shell fs ls /dev
+wdb shell fs ls /dev
 
 # Run a shell command
-tools/webdb/target/debug/wdb shell kernel uptime
+wdb shell kernel uptime
 
 # Control the RGB LED
-tools/webdb/target/debug/wdb rgbled red --pin 48
-tools/webdb/target/debug/wdb rgbled off --pin 48
+wdb rgbled red --pin 48
+wdb rgbled off --pin 48
 
 # Read or follow buffered logs
-tools/webdb/target/debug/wdb log
-tools/webdb/target/debug/wdb log --follow
+wdb log
+wdb log --follow
 
 # Upload a firmware update
-tools/webdb/target/debug/wdb ota build/app/zephyr/zephyr.signed.bin
+wdb ota build/app/zephyr/zephyr.signed.bin
 ```
 
 ## Filesystem And Hardware Model
@@ -307,10 +307,10 @@ The same device paths are available to WASM applications, the Zephyr shell, HTTP
 At startup, WebOS reports the result of every required component:
 
 ```text
-Startup: filesystem=0 devfs=0 gpio=0 led=0 iwasm=0 wifi=0 http=0
+Startup: OK
 ```
 
-The `/health` response includes the same component status. MCUboot test images are confirmed only after the required local services initialize successfully, preserving rollback when a new firmware image cannot start correctly.
+If a component fails, the startup record reports `FAILED` and includes each component's return code for diagnosis. The `/health` response exposes the component return codes, where zero means success. MCUboot test images are confirmed only after the required local services initialize successfully, preserving rollback when a new firmware image cannot start correctly.
 
 ## Testing
 

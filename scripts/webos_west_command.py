@@ -45,13 +45,15 @@ class WebosWestCommand(WestCommand):
     def _test(self, args):
         repo = Path(__file__).resolve().parent.parent
         workspace = repo.parent
-        wdb = workspace / "tools" / "webdb" / "target" / "debug" / "wdb"
+        wdb = Path.home() / ".cargo" / "bin" / "wdb"
 
         if not wdb.is_file():
             self.die(f"wdb not found: {wdb}")
 
-        self.inf("Building and flashing the physical device")
-        self._run(["bash", "-lc", "source .env && run"], workspace)
+        self.inf("Building and flashing the physical device through wdb")
+        self._run(
+            [str(wdb), "run", "--timeout", str(args.startup_timeout)], workspace
+        )
 
         self.inf("Waiting for the device HTTP service")
         root_listing = self._wait_for_device(

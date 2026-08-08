@@ -65,8 +65,13 @@ int main(void) {
   webos_health_set(&health);
   ret = webos_http_init();
 
-  LOG_INF("Startup: filesystem=%d devfs=%d gpio=%d led=%d iwasm=%d wifi=%d http=%d", health.filesystem, health.devfs,
-          health.gpio, health.led, health.iwasm, health.wifi, ret);
+  if (health.filesystem == 0 && health.devfs == 0 && health.gpio == 0 && health.led == 0 && health.iwasm == 0 &&
+      health.wifi == 0 && ret == 0) {
+    LOG_INF("Startup: OK");
+  } else {
+    LOG_ERR("Startup: FAILED filesystem=%d devfs=%d gpio=%d led=%d iwasm=%d wifi=%d http=%d", health.filesystem,
+            health.devfs, health.gpio, health.led, health.iwasm, health.wifi, ret);
+  }
 
   return ret;
 }

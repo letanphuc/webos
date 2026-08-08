@@ -25,13 +25,13 @@
   - Build with explicit device port: `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`
 - `monitor` runs `west espressif monitor` using `WEBOS_PORT`, defaulting to `/dev/tty.usbserial-1130` at `115200` baud. The flash helper uses `WEBOS_BAUD=2000000`; the current frequently used device is `/dev/tty.usbserial-130`.
 - If flashing fails with `Resource busy`, close any monitor session and check both serial aliases with `lsof /dev/tty.usbserial-130 /dev/cu.usbserial-130`, then retry `source .env && WEBOS_PORT=/dev/tty.usbserial-130 flash`.
-- For device-side HTTP, shell, file push, log, OTA, and WASM smoke tests, use `wdb` from the workspace root after `source .env`, e.g. `tools/webdb/target/debug/wdb shell fs ls /dev` or `tools/webdb/target/debug/wdb shell iwasm exec /STORAGE:/apps/blink2.wasm 2`.
-- Avoid raw `curl` and custom Python snippets for device HTTP/shell testing; use `tools/webdb/target/debug/wdb ...` so host/device interactions follow the repo-supported path.
+- For device-side HTTP, shell, file push, log, OTA, and WASM smoke tests, use `wdb` from the workspace root after `source .env`, e.g. `wdb shell fs ls /dev` or `wdb shell iwasm exec /STORAGE:/apps/blink2.wasm 2`.
+- Avoid raw `curl` and custom Python snippets for device HTTP/shell testing; use `wdb ...` so host/device interactions follow the repo-supported path.
 - Common `wdb` checks after Wi-Fi connects:
-  - Health/shell smoke: `source .env && tools/webdb/target/debug/wdb shell fs ls /dev`
-  - Read logs: `source .env && tools/webdb/target/debug/wdb log`
-  - Follow logs: `source .env && tools/webdb/target/debug/wdb log --follow`
-  - OTA upload: `source .env && tools/webdb/target/debug/wdb ota build/app/zephyr/zephyr.signed.bin`
+  - Health/shell smoke: `source .env && wdb shell fs ls /dev`
+  - Read logs: `source .env && wdb log`
+  - Follow logs: `source .env && wdb log --follow`
+  - OTA upload: `source .env && wdb ota build/app/zephyr/zephyr.signed.bin`
 - WiFi credentials live in `app/wifi.conf` (gitignored). `build` and `rebuild` load it via `EXTRA_CONF_FILE`. Override with `WEBOS_WIFI_SSID`/`WEBOS_WIFI_PSK` env vars.
 - For extra config fragments (e.g. debug): `build -- -DEXTRA_CONF_FILE=debug.conf`. Multiple fragments: `build -- -DEXTRA_CONF_FILE="debug.conf;other.conf"`.
 - Run application Twister builds after `source .env` with `twister_app`.

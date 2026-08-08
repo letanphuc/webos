@@ -379,7 +379,7 @@ The daemon should retain structured metadata in addition to raw bytes:
   "timestamp_device_ms": 19287,
   "level": "info",
   "module": "webos",
-  "message": "Startup: filesystem=0 devfs=0 gpio=0 led=0 iwasm=0 wifi=0 http=0"
+  "message": "Startup: OK"
 }
 ```
 
@@ -418,7 +418,7 @@ Expected output:
 ```text
 [device] 30:ed:a0:27:da:64
 [flash]  935180 bytes written and verified
-[boot]   filesystem=0 devfs=0 gpio=0 led=0 iwasm=0
+[boot]   Startup: OK
 [http]   192.168.50.17:8080 ready
 [ready]  device online in 19.3s
 ```
