@@ -36,10 +36,27 @@ The frontend expresses operations such as flash, shell, push, logcat, applicatio
 - Make physical-device tests deterministic and easy to automate.
 - Keep the design independent of ESP-specific user commands.
 
+## Current Implementation
+
+The initial daemon-backed workflow is implemented in `tools/wdb` and published as the `webos-wdb` west project. The daemon listens on TCP `127.0.0.1:7331`, owns the serial port, retains logs, and handles every client connection independently.
+
+The following workflow has been validated on the physical ESP32-S3 device:
+
+```sh
+# Terminal 1
+wdb logcat --follow
+
+# Terminal 2, while Terminal 1 remains connected
+wdb flash
+wdb shell kernel uptime
+```
+
+Flash progress appears immediately, `wdb status` remains responsive with a `flashing` state, the log follower survives the serial release/reconnect cycle, and it receives the complete new startup through the healthy `Startup:` record.
+
 ## Non-Goals
 
 - WDB is not a replacement for Zephyr, west, esptool, or WAMR internals. It orchestrates them behind stable operations.
-- The first version does not need a binary IPC protocol; framed JSON over a local socket is sufficient.
+- The first version does not need a binary IPC protocol; newline-framed JSON over a local TCP connection is sufficient.
 - Binary file transfer over an interactive serial shell is not supported.
 - Serial and HTTP logs are not merged by default because they may contain duplicates.
 
@@ -90,8 +107,6 @@ Suggested local state:
 
 ```text
 ~/.wdb/
-├── wdbd.sock
-├── wdbd.pid
 ├── devices.json
 └── logs/
     └── <device-id>.log
@@ -459,11 +474,13 @@ Expected behavior:
 
 ## IPC Protocol
 
-Use a Unix domain socket on macOS and Linux:
+Use a loopback TCP listener by default:
 
 ```text
-~/.wdb/wdbd.sock
+127.0.0.1:7331
 ```
+
+The address is configurable with `WDB_DAEMON_ADDR` or `wdb --server`. Keeping the default on loopback prevents remote access while allowing the operating system to queue and isolate multiple simultaneous clients. Each accepted connection runs independently, so a streaming log subscriber remains open while flash, status, shell, and other clients continue using the daemon.
 
 Framed JSON is sufficient for the initial protocol:
 
