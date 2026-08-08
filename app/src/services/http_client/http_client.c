@@ -281,6 +281,8 @@ int32_t webos_http_request(uint32_t method, const char* url, const char* headers
   struct response_context response_context;
   const char* header_fields[2] = {NULL, NULL};
   enum http_method http_method;
+  struct timeval socket_timeout;
+  bool connect_timed_out = false;
   int socket_fd = -1;
   int ret;
 
@@ -305,6 +307,8 @@ int32_t webos_http_request(uint32_t method, const char* url, const char* headers
   if (timeout_ms == 0) {
     timeout_ms = WEB_HTTP_DEFAULT_TIMEOUT_MS;
   }
+  socket_timeout.tv_sec = timeout_ms / 1000;
+  socket_timeout.tv_usec = (timeout_ms % 1000) * 1000;
 
   response->status_code = 0;
   response->body_len = 0;
@@ -330,6 +334,14 @@ int32_t webos_http_request(uint32_t method, const char* url, const char* headers
       continue;
     }
 
+    if (zsock_setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &socket_timeout, sizeof(socket_timeout)) < 0 ||
+        zsock_setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &socket_timeout, sizeof(socket_timeout)) < 0) {
+      LOG_ERR("Cannot configure socket timeout for %s: errno %d", parsed.host, errno);
+      zsock_close(socket_fd);
+      socket_fd = -1;
+      continue;
+    }
+
     if (parsed.tls) {
       sec_tag_t tags[] = {WEB_HTTP_CA_TAG};
       int verify = TLS_PEER_VERIFY_REQUIRED;
@@ -348,6 +360,7 @@ int32_t webos_http_request(uint32_t method, const char* url, const char* headers
       break;
     }
 
+    connect_timed_out |= errno == ETIMEDOUT || errno == EAGAIN;
     LOG_DBG("Connection to %s:%s failed: errno %d", parsed.host, parsed.port, errno);
     zsock_close(socket_fd);
     socket_fd = -1;
@@ -355,7 +368,7 @@ int32_t webos_http_request(uint32_t method, const char* url, const char* headers
 
   if (socket_fd < 0) {
     LOG_ERR("Cannot connect to %s:%s", parsed.host, parsed.port);
-    ret = parsed.tls ? WEB_HTTP_ERR_TLS : WEB_HTTP_ERR_CONNECT;
+    ret = connect_timed_out ? WEB_HTTP_ERR_TIMEOUT : (parsed.tls ? WEB_HTTP_ERR_TLS : WEB_HTTP_ERR_CONNECT);
     goto cleanup;
   }
 

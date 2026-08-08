@@ -1,7 +1,9 @@
 # Sudoku HTTPS Rust WASM sample
 
 This `no_std` Rust WASM application calls the API Ninjas Sudoku endpoint through
-the WebOS `web_http_request` host API and prints the JSON response.
+the WebOS `web_http_request` host API, parses the 9x9 puzzle, solves it locally
+with an iterative backtracking solver, and prints both grids. Empty cells in the
+puzzle are displayed as `.`.
 
 Set the API key in the shell rather than storing it in source control:
 
