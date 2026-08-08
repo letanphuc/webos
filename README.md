@@ -75,10 +75,19 @@ The current firmware and the `hello`, `blink`, and `led_colors` applications hav
 
 ## Developer Experience
 
-From the west workspace root, the normal application loop is:
+From the west workspace root, load the Zephyr environment and check the device connection:
 
 ```sh
 source .env
+wdb devices
+wdb status
+```
+
+WDB starts its background daemon automatically. The daemon is the sole owner of the serial port, retains boot logs across resets, and lets flashing, log streaming, and shell commands run from separate terminals.
+
+The normal application loop is:
+
+```sh
 wdb app run webos/sampleapps/blink
 ```
 
@@ -95,17 +104,17 @@ wdb app run webos/sampleapps/led_colors -- 3
 3. Runs it with `iwasm exec`.
 4. Prints the application output.
 
-No host firmware rebuild or device reflash is required.
+No host firmware rebuild or device reflash is required. WDB prefers HTTP for runtime commands and falls back to serial for shell access; binary uploads require HTTP.
 
 ## Architecture
 
 ```text
 Host
 +---------------------------+
-| wdb                     |
-| build / push / run / log  |
+| wdb CLI + wdbd daemon     |
+| build / flash / run / log |
 +-------------+-------------+
-              | local HTTP
+              | serial + HTTP
 Device        v
 +---------------------------+
 | Zephyr host firmware      |
@@ -194,32 +203,45 @@ WEBOS_BUILD_DIR=<workspace>/build
 
 Put local Wi-Fi credentials in the ignored `webos/app/wifi.conf` configuration fragment.
 
-Build the device bridge once from the workspace root:
+Install the device bridge from the west-managed checkout:
 
 ```sh
-cargo build --manifest-path tools/wdb/Cargo.toml
+cargo install --path tools/wdb --force
+wdb --version
 ```
 
-## Build And Flash
+The Zephyr virtual environment must be active when using WDB to build or flash. For WDB development without installing it, use `cargo build --manifest-path tools/wdb/Cargo.toml` and run `tools/wdb/target/debug/wdb` directly.
+
+## Build, Flash, And Monitor
 
 After loading the workspace environment:
 
 ```sh
-build       # incremental firmware build
-rebuild     # pristine firmware build
-flash       # flash the existing build
-run         # build and flash
-monitor     # open the serial monitor
-menuconfig  # edit Zephyr configuration
+wdb build              # incremental firmware build
+wdb build --pristine   # pristine firmware build
+wdb flash              # flash the existing build and wait for startup
+wdb flash --follow     # flash, print the boot log, and keep following logs
+wdb run                # build, flash, wait for startup, and follow logs
 ```
 
-Set a serial port explicitly when needed:
+Keep a log follower open while working from other terminals:
 
 ```sh
-WEBOS_PORT=/dev/tty.usbserial-0001 flash
+# Terminal 1
+wdb logcat --follow
+
+# Terminal 2
+wdb flash
 ```
 
-If the configured port is missing and exactly one `/dev/tty.usbserial-*` device exists, `flash` and `monitor` select it automatically.
+Select a serial port explicitly when more than one device is attached:
+
+```sh
+wdb kill-server
+wdb -s /dev/tty.usbserial-0001 start-server
+```
+
+With one attached USB serial device, WDB discovers the port and starts the daemon automatically. Do not run a separate serial monitor or esptool process beside WDB; `wdbd` must remain the sole serial owner. Use `wdb server-status` and `wdb kill-server` to inspect or stop the daemon.
 
 ## Build A WASM Application
 
@@ -260,23 +282,32 @@ Hardware-specific native calls are intentionally not exported. WASM applications
 Useful `wdb` commands from the workspace root:
 
 ```sh
-# Inspect virtual hardware
-wdb shell fs ls /dev
+# Inspect combined serial, boot, startup, and HTTP health
+wdb devices
+wdb status
 
-# Run a shell command
+# Inspect virtual hardware or run another Zephyr shell command
+wdb shell fs ls /dev
 wdb shell kernel uptime
+
+# Select HTTP or serial explicitly when diagnosing a transport
+wdb shell --via http kernel uptime
+wdb shell --via serial kernel uptime
 
 # Control the RGB LED
 wdb rgbled red --pin 48
 wdb rgbled off --pin 48
 
-# Read or follow buffered logs
-wdb log
-wdb log --follow
+# Read retained logs or follow new serial output
+wdb logcat
+wdb logcat --follow
 
-# Upload a firmware update
+# Upload a file or signed firmware update over HTTP
+wdb push app.wasm /STORAGE:/apps/app.wasm
 wdb ota build/app/zephyr/zephyr.signed.bin
 ```
+
+Run `wdb <command> --help` for all command-specific options. See [`tools/wdb/README.md`](https://github.com/letanphuc/webos-wdb#readme) for daemon configuration, transport behavior, and troubleshooting.
 
 ## Filesystem And Hardware Model
 
@@ -314,14 +345,21 @@ If a component fails, the startup record reports `FAILED` and includes each comp
 
 ## Testing
 
-Run the complete integration test on the physical development device:
+Run focused physical-device smoke tests through WDB:
 
 ```sh
 source .env
+wdb test boot
+wdb test app webos/sampleapps/blink
+```
+
+Run the complete repository integration test when changing firmware or device behavior:
+
+```sh
 west webos test
 ```
 
-This builds and flashes the firmware, waits for the device to connect, verifies the devfs tree, exercises GPIO and RGB LED file I/O, and runs the `hello` and `led_colors` WASM applications. The command leaves GPIO low and the RGB LED off.
+The complete test builds and flashes through WDB, waits for the device to connect, verifies the devfs tree, exercises GPIO and RGB LED file I/O, and runs the `hello` and `led_colors` WASM applications. It requires `wdb` at `~/.cargo/bin/wdb` and leaves GPIO low and the RGB LED off.
 
 For host-side Zephyr coverage, run the application integration build and repository test suites:
 
