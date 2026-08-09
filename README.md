@@ -9,6 +9,7 @@ In a conventional embedded project, application logic, hardware drivers, network
 - **Zephyr host firmware** owns boot, Wi-Fi, storage, hardware drivers, OTA, recovery, logging, and resource control.
 - **WebAssembly applications** contain product behavior and are loaded from the device filesystem at runtime by WAMR.
 - **[`wdb`](https://github.com/letanphuc/webos-wdb)** builds, uploads, starts, and observes applications from the development machine.
+- **ADB (optional)** provides a familiar USB workflow for device discovery, interactive shell access, sandboxed file upload, log streaming, and reboot.
 
 The result is an application workflow closer to deploying software than programming firmware:
 
@@ -34,12 +35,12 @@ WebOS exposes device drivers through a virtual `/dev` filesystem. Hardware resou
 
 Applications control hardware by reading and writing these files. For example, writing `out` to a GPIO's `direction` file configures the pin, writing `1` to its `value` file drives it high, and writing three RGB bytes to an LED's `color` file updates the LED.
 
-This file-oriented model creates one consistent interface across the system. The same path can be accessed by a WASM application, the Zephyr shell, an HTTP operation, or `wdb`. Drivers remain in trusted native firmware, while applications depend on stable names and data formats rather than board-specific Zephyr APIs.
+This file-oriented model creates one consistent interface across the system. The same path can be accessed by a WASM application, the Zephyr shell, an HTTP operation, `wdb`, or optional ADB shell access. Drivers remain in trusted native firmware, while applications depend on stable names and data formats rather than board-specific Zephyr APIs.
 
 ```text
 WASM application ─┐
 Zephyr shell ──────┼── read/write ──> /dev ──> native Zephyr driver ──> hardware
-wdb / HTTP ──────┘
+wdb / ADB / HTTP ─┘
 ```
 
 The filesystem tree is dynamic: drivers register files at runtime, parent directories are created automatically, and empty directories are removed when their last device disappears. This makes device discovery straightforward and gives future hot-plug or optional hardware the same interface as built-in peripherals.
@@ -72,8 +73,9 @@ WebOS is not a browser or a desktop operating system. It is a small device runti
 - Bounded outbound HTTP/HTTPS requests from WASM applications
 - Firmware OTA, buffered logs, remote shell, and component health reporting
 - One-command sample build, upload, and execution with `wdb`
+- Optional ADB-compatible USB access for `devices`, interactive `shell`, sandboxed `push`, `logcat`, and `reboot`
 
-The current firmware and the `hello`, `blink`, and `led_colors` applications have been validated on a physical ESP32-S3 development device.
+The current firmware, the `hello`, `blink`, and `led_colors` applications, and the documented WDB and ADB workflows have been validated on a physical ESP32-S3 development device.
 
 ## Developer Experience
 
@@ -86,6 +88,15 @@ wdb status
 ```
 
 WDB starts its background daemon automatically. The daemon is the sole owner of the serial port, retains boot logs across resets, and lets flashing, log streaming, and shell commands run from separate terminals.
+
+As an optional alternative for runtime access over the ESP32-S3 native USB port, install Android SDK Platform Tools and use the standard `adb` client:
+
+```sh
+adb devices -l
+adb shell
+```
+
+The ADB transport is independent of WDB's UART connection, so WDB can continue to own the serial port while ADB uses USB. WDB remains the primary tool for building, flashing, packaging, and the complete application workflow.
 
 The normal application loop is:
 
@@ -112,27 +123,28 @@ No host firmware rebuild or device reflash is required. WDB prefers HTTP for run
 
 ```text
 Host
-+---------------------------+
-| wdb CLI + wdbd daemon     |
-| build / flash / run / log |
-+-------------+-------------+
-              | serial + HTTP
-Device        v
-+---------------------------+
-| Zephyr host firmware      |
-|                           |
-|  HTTP / OTA / shell       |
-|  FatFS       /STORAGE:    |
-|  devfs       /dev         |
-|  WAMR        iwasm        |
-|  MCUboot     firmware OTA |
-+-------------+-------------+
-              |
-              v
-+---------------------------+
-| WASM application          |
-| webos.h native ABI        |
-+---------------------------+
++-----------------------------+
+| wdb CLI + wdbd daemon       |
+| ADB CLI (optional)          |
+| build / flash / run / log   |
++--------------+--------------+
+               | serial + HTTP + USB ADB
+Device         v
++-----------------------------+
+| Zephyr host firmware        |
+|                             |
+|  HTTP / OTA / shell         |
+|  FatFS       /STORAGE:      |
+|  devfs       /dev           |
+|  WAMR        iwasm          |
+|  MCUboot     firmware OTA   |
++--------------+--------------+
+               |
+               v
++-----------------------------+
+| WASM application            |
+| webos.h native ABI          |
++-----------------------------+
 ```
 
 The host firmware owns networking, storage, hardware drivers, recovery, and application execution. WASM payloads remain small and disposable.
@@ -151,6 +163,8 @@ webos/
 ├── boards/                 Out-of-tree ESP32-S3 board
 ├── drivers/                GPIO and RGB LED devfs wrappers
 ├── dts/                    Devicetree bindings
+├── include/webos/          Public WebOS service APIs
+├── lib/adb/                Zephyr-native ADB protocol and USB services
 ├── lib/devfs/              Virtual `/dev` filesystem
 ├── sampleapps/             WASM application examples and SDK
 ├── doc/                    Project documentation and product plan
@@ -171,6 +185,7 @@ Install:
 - ccache
 - esptool
 - Rust and Cargo for `wdb` and Rust sample applications
+- Android SDK Platform Tools for the optional `adb` workflow
 - Rust's `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - WASI SDK 34 for C sample applications
 
@@ -214,6 +229,8 @@ wdb --version
 ```
 
 The Zephyr virtual environment must be active when using WDB to build or flash. For WDB development without installing it, use `cargo build --manifest-path tools/wdb/Cargo.toml` and run `tools/wdb/target/debug/wdb` directly.
+
+ADB is optional and does not use the Zephyr virtual environment. After installing Android SDK Platform Tools, verify the client with `adb version`; the firmware enumerates as an ADB-compatible USB device with a stable `webos-esp32s3-*` serial number.
 
 ## Build, Flash, And Monitor
 
@@ -335,6 +352,41 @@ wdb ota build/app/zephyr/zephyr.signed.bin
 
 Run `wdb <command> --help` for all command-specific options. See [`tools/wdb/README.md`](https://github.com/letanphuc/webos-wdb#readme) for daemon configuration, transport behavior, and troubleshooting.
 
+### Optional ADB Access
+
+ADB provides a standard USB alternative for day-to-day runtime access. It is intentionally a bounded WebOS-compatible subset rather than Android userspace:
+
+```sh
+# Discover the device by its stable USB serial
+adb devices -l
+
+# Open an interactive Zephyr shell; use exit or Ctrl-D to close it
+adb shell
+
+# Upload only into the sandboxed WebOS storage volume
+adb push app.wasm /STORAGE:/apps/app.wasm
+
+# Stream logs, dump retained logs, or clear the retained ring
+adb logcat
+adb logcat -d
+adb logcat -c
+
+# Cold-reboot and wait for the same serial to enumerate again
+adb reboot
+```
+
+A WASM application already present on the device can be launched from the interactive shell:
+
+```text
+$ adb shell
+~$ iwasm exec /STORAGE:/apps/hello.wasm
+<inf> iwasm: shell-app: hello world
+WEBOS_EVENT app-run-complete rc=0
+~$ exit
+```
+
+The current ADB transport is unauthenticated and must be treated as development-only. Interactive sessions can invoke every registered Zephyr shell command, and `adb push` is restricted to explicit paths below `/STORAGE:/`. Android package management, `adb install`, `adb pull`, port forwarding, PTYs, and `shell_v2` are not implemented. WDB remains the recommended tool for firmware builds, flashing, OTA, application builds, and automated device workflows.
+
 ## Filesystem And Hardware Model
 
 WebOS uses two primary filesystem namespaces:
@@ -357,7 +409,7 @@ Examples:
 /dev/led/48/color
 ```
 
-The same device paths are available to WASM applications, the Zephyr shell, HTTP file operations, and `wdb`.
+The same device paths are available to WASM applications, the Zephyr shell, HTTP file operations, `wdb`, and optional ADB shell access.
 
 ## Health And Recovery
 
