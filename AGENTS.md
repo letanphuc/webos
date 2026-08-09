@@ -56,7 +56,7 @@
 - RAM-load branches/commits kept for reference:
   - app `origin/ram-load`
   - Zephyr local commit `aaa5e9b5ed4 esp32s3: support MCUboot PSRAM RAM load`
-  - MCUboot fork `git@github.com:letanphuc/zephyr-mcuboot.git`, branch `ram-load`, commit `9efb22a8ec6ea39950fa5e26ce8a4bf7f275642f`
+  - MCUboot fork `git@github.com:webos-esp/zephyr-mcuboot.git`, branch `ram-load`, commit `9efb22a8ec6ea39950fa5e26ce8a4bf7f275642f`
 - RAM-load OTA findings are documented in `docs/ram-load-ota.md`. Important lesson: live erase/write of `slot0` while the full app and Wi-Fi stack are running is not proven safe. Direct `HTTP -> slot0`, 4 KB inline buffers, double-buffer worker flashing, and erase-up-front all showed stalls, timeouts, or fatal exceptions. Full-image PSRAM staging completed once but is not proven reliable.
 - For future fast OTA work, prefer a staging/updater design over live `slot0` mutation. Do not assume RAM-load means all runtime code, rodata, Wi-Fi blobs, interrupt paths, and flash/cache operations are independent of the original flash slot.
 

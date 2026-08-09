@@ -8,7 +8,7 @@ In a conventional embedded project, application logic, hardware drivers, network
 
 - **Zephyr host firmware** owns boot, Wi-Fi, storage, hardware drivers, OTA, recovery, logging, and resource control.
 - **WebAssembly applications** contain product behavior and are loaded from the device filesystem at runtime by WAMR.
-- **[`wdb`](https://github.com/letanphuc/webos-wdb)** builds, uploads, starts, and observes applications from the development machine.
+- **[`wdb`](https://github.com/webos-esp/webos-wdb)** builds, uploads, starts, and observes applications from the development machine.
 - **ADB (optional)** provides a familiar USB workflow for device discovery, interactive shell access, sandboxed file upload, log streaming, and reboot.
 
 The result is an application workflow closer to deploying software than programming firmware:
@@ -172,7 +172,7 @@ webos/
 └── tests/                  Zephyr Twister tests
 ```
 
-The workspace also contains Zephyr, MCUboot, required modules, build output, and [`tools/wdb`](https://github.com/letanphuc/webos-wdb). The companion `wdb` repository is fetched by west from the project entry in `west.yml`.
+The workspace also contains Zephyr, MCUboot, required modules, build output, and [`tools/wdb`](https://github.com/webos-esp/webos-wdb). The companion `wdb` repository is fetched by west from the project entry in `west.yml`.
 
 ## Prerequisites
 
@@ -350,7 +350,7 @@ wdb push app.wasm /STORAGE:/apps/app.wasm
 wdb ota build/app/zephyr/zephyr.signed.bin
 ```
 
-Run `wdb <command> --help` for all command-specific options. See [`tools/wdb/README.md`](https://github.com/letanphuc/webos-wdb#readme) for daemon configuration, transport behavior, and troubleshooting.
+Run `wdb <command> --help` for all command-specific options. See [`tools/wdb/README.md`](https://github.com/webos-esp/webos-wdb#readme) for daemon configuration, transport behavior, and troubleshooting.
 
 ### Optional ADB Access
 

@@ -8,16 +8,16 @@ manifest:
   remotes:
     - name: zephyrproject-rtos
       url-base: https://github.com/zephyrproject-rtos
-    - name: letanphuc
-      url-base: https://github.com/letanphuc
+    - name: webos-esp
+      url-base: https://github.com/webos-esp
 
   projects:
     - name: webos-wdb
-      remote: letanphuc
+      remote: webos-esp
       revision: main
       path: tools/wdb
     - name: wasm-micro-runtime
-      remote: letanphuc
+      remote: webos-esp
       revision: main
       path: modules/wasmmicroruntime
     - name: zephyr

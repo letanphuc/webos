@@ -20,7 +20,7 @@ The motivation is update speed. Standard MCUboot swap requires writing the uploa
 Application repository:
 
 - Last pre-RAM-load application commit: `04783524185816affc2afc979d76ad387614277c`.
-- RAM-load application branch pushed as: `origin/ram-load` in `git@github.com:letanphuc/webos.git`.
+- RAM-load application branch pushed as: `origin/ram-load` in `git@github.com:webos-esp/webos.git`.
 
 Zephyr repository:
 
@@ -29,7 +29,7 @@ Zephyr repository:
 
 MCUboot repository:
 
-- RAM-load support commit pushed to fork branch: `9efb22a8ec6ea39950fa5e26ce8a4bf7f275642f` -> `git@github.com:letanphuc/zephyr-mcuboot.git`, branch `ram-load`.
+- RAM-load support commit pushed to fork branch: `9efb22a8ec6ea39950fa5e26ce8a4bf7f275642f` -> `git@github.com:webos-esp/zephyr-mcuboot.git`, branch `ram-load`.
 - Requested local baseline checkout after push: `0fae8920c4e5acb792b3fe766c89c668f42be6ee`.
 
 ## Partition Layout Observed
