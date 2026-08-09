@@ -20,6 +20,21 @@ config WEBOS_WIFI_PSK
 	string "Wi-Fi PSK"
 	default ""
 
+config WEBOS_IWASM_EXEC_STACK_SIZE
+	int "WASM execution thread stack size"
+	default 16384
+	range 8192 32768
+	help
+	  Native stack reserved for running WAMR applications launched by a
+	  management shell. This keeps execution off transport callback stacks.
+	  Launch remains synchronous, so management-shell applications are
+	  expected to terminate.
+
+config WEBOS_IWASM_EXEC_PRIORITY
+	int "WASM execution thread priority"
+	default 5
+	range -15 15
+
 menu "WASM HTTP client"
 
 config WEBOS_WASM_HTTP_MAX_URL_LEN

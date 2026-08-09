@@ -22,6 +22,18 @@ LOG_MODULE_REGISTER(iwasm, LOG_LEVEL_INF);
 static bool runtime_ready;
 static const struct shell* active_shell;
 static K_MUTEX_DEFINE(exec_lock);
+static K_SEM_DEFINE(exec_request_ready, 0, 1);
+static K_SEM_DEFINE(exec_request_done, 0, 1);
+
+struct iwasm_exec_request {
+  const struct shell* shell;
+  const char* path;
+  int argc;
+  char** argv;
+  int result;
+};
+
+static struct iwasm_exec_request exec_request;
 
 int webos_iwasm_vprintf(const char* format, va_list ap) {
   if (active_shell) {
@@ -335,9 +347,9 @@ static int iwasm_exec_file(const struct shell* sh, const char* path, int app_arg
 
   fs_seek(&file, 0, FS_SEEK_SET);
 
-  buf = (uint8_t*)k_malloc(file_size);
+  buf = (uint8_t*)iwasm_malloc(file_size);
   if (!buf) {
-    LOG_ERR("Out of memory reading %s (%d bytes)", path, file_size);
+    LOG_ERR("Out of external memory reading %s (%d bytes)", path, file_size);
     fs_close(&file);
     return -ENOMEM;
   }
@@ -400,9 +412,35 @@ cleanup_instance:
 cleanup_module:
   wasm_runtime_unload(module);
 cleanup_buf:
-  k_free(buf);
+  iwasm_free(buf);
   return ret;
 }
+
+static void iwasm_exec_thread(void* arg1, void* arg2, void* arg3) {
+  bool thread_env_ready = false;
+
+  ARG_UNUSED(arg1);
+  ARG_UNUSED(arg2);
+  ARG_UNUSED(arg3);
+
+  while (true) {
+    k_sem_take(&exec_request_ready, K_FOREVER);
+    if (!thread_env_ready) {
+      thread_env_ready = wasm_runtime_init_thread_env();
+    }
+    if (thread_env_ready) {
+      exec_request.result =
+          iwasm_exec_file(exec_request.shell, exec_request.path, exec_request.argc, exec_request.argv);
+    } else {
+      LOG_ERR("Failed to initialize WAMR execution thread environment");
+      exec_request.result = -EIO;
+    }
+    k_sem_give(&exec_request_done);
+  }
+}
+
+K_THREAD_DEFINE(iwasm_exec_thread_id, CONFIG_WEBOS_IWASM_EXEC_STACK_SIZE, iwasm_exec_thread, NULL, NULL, NULL,
+                CONFIG_WEBOS_IWASM_EXEC_PRIORITY, 0, 0);
 
 static int cmd_iwasm_exec(const struct shell* sh, size_t argc, char** argv) {
   if (argc < 2) {
@@ -413,9 +451,22 @@ static int cmd_iwasm_exec(const struct shell* sh, size_t argc, char** argv) {
   const char* file = argv[1];
   int app_argc = (int)argc - 1;
   char** app_argv = &argv[1];
+  int ret;
 
-  k_mutex_lock(&exec_lock, K_FOREVER);
-  int ret = iwasm_exec_file(sh, file, app_argc, app_argv);
+  ret = k_mutex_lock(&exec_lock, K_NO_WAIT);
+  if (ret != 0) {
+    shell_error(sh, "iwasm execution is already active");
+    shell_print(sh, "WEBOS_EVENT app-run-complete rc=%d", -EBUSY);
+    return -EBUSY;
+  }
+  exec_request.shell = sh;
+  exec_request.path = file;
+  exec_request.argc = app_argc;
+  exec_request.argv = app_argv;
+  k_sem_reset(&exec_request_done);
+  k_sem_give(&exec_request_ready);
+  k_sem_take(&exec_request_done, K_FOREVER);
+  ret = exec_request.result;
   k_mutex_unlock(&exec_lock);
 
   if (ret != 0) {
