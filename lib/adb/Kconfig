@@ -76,6 +76,19 @@ config WEBOS_ADB_TX_PAYLOAD_SIZE
 	  Size of each router-owned service output slot. Transports must accept
 	  packets at least this large.
 
+config WEBOS_ADB_CONTROL_QUEUE_DEPTH
+	int "Queued ADB control packets"
+	default 4
+	range 2 16
+	help
+	  Bound protocol responses waiting for transport capacity independently
+	  from stream payload slots.
+
+config WEBOS_ADB_CONTROL_PAYLOAD_SIZE
+	int "Maximum queued ADB control payload"
+	default 128
+	range 104 512
+
 config WEBOS_ADB_MAX_STREAMS
 	int "Maximum simultaneous ADB streams"
 	default 2
@@ -118,6 +131,20 @@ config WEBOS_ADB_SHELL_MAX_STREAMS
 	default 1
 	range 1 4
 	depends on WEBOS_ADB_SHELL
+
+config WEBOS_ADB_LOGCAT
+	bool "Streaming ADB logcat service"
+	default n
+	depends on WEBOS_LOG_BUFFER && WEBOS_ADB_SHELL
+	help
+	  Recognize the legacy shell service used by adb logcat, stream retained
+	  WebOS logs, and follow new log records until the host closes the stream.
+
+config WEBOS_ADB_LOGCAT_BUFFER_SIZE
+	int "ADB logcat pending ring size"
+	default 4096
+	range 512 16384
+	depends on WEBOS_ADB_LOGCAT
 
 config WEBOS_ADB_SYNC
 	bool "Legacy ADB sync push service"

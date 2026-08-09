@@ -26,6 +26,7 @@ LOG_MODULE_DECLARE(webos_adb, LOG_LEVEL_INF);
 #define ADB_USB_ENABLED 0
 #define ADB_USB_OUT_ENGAGED 1
 #define ADB_USB_IN_ENGAGED 2
+#define ADB_USB_RESETTING 3
 #define ADB_SERIAL_PREFIX "webos-esp32s3-"
 #define ADB_DEVICE_ID_BYTES 6U
 #define ADB_SERIAL_CAPACITY (sizeof(ADB_SERIAL_PREFIX) + ADB_DEVICE_ID_BYTES * 2U)
@@ -59,6 +60,8 @@ struct adb_usb_data {
   size_t tx_head;
   size_t tx_tail;
   size_t tx_count;
+  struct net_buf* active_in_buffer;
+  struct net_buf* active_out_buffer;
 };
 
 static struct adb_usb_descriptors adb_descriptors = {
@@ -110,6 +113,7 @@ static struct adb_usb_data adb_usb = {
     .descriptors = &adb_descriptors,
     .fs_descriptors = adb_fs_descriptors,
 };
+static K_MUTEX_DEFINE(tx_lock);
 
 static uint8_t bulk_out_endpoint(void) { return adb_usb.descriptors->out_ep.bEndpointAddress; }
 
@@ -117,28 +121,35 @@ static uint8_t bulk_in_endpoint(void) { return adb_usb.descriptors->in_ep.bEndpo
 
 static int submit_out(struct usbd_class_data* class_data) {
   struct net_buf* buffer;
-  int ret;
+  int ret = 0;
 
-  if (!atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED)) {
-    return -ENODEV;
+  k_mutex_lock(&tx_lock, K_FOREVER);
+  if (!atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED) || atomic_test_bit(&adb_usb.state, ADB_USB_RESETTING)) {
+    ret = -ENODEV;
+    goto out;
   }
-
   if (atomic_test_and_set_bit(&adb_usb.state, ADB_USB_OUT_ENGAGED)) {
-    return -EBUSY;
+    ret = -EBUSY;
+    goto out;
   }
 
   buffer = usbd_ep_buf_alloc(class_data, bulk_out_endpoint(), CONFIG_WEBOS_ADB_USB_TRANSFER_SIZE);
   if (buffer == NULL) {
     atomic_clear_bit(&adb_usb.state, ADB_USB_OUT_ENGAGED);
-    return -ENOMEM;
+    ret = -ENOMEM;
+    goto out;
   }
 
+  adb_usb.active_out_buffer = buffer;
   ret = usbd_ep_enqueue(class_data, buffer);
   if (ret != 0) {
+    adb_usb.active_out_buffer = NULL;
     net_buf_unref(buffer);
     atomic_clear_bit(&adb_usb.state, ADB_USB_OUT_ENGAGED);
   }
 
+out:
+  k_mutex_unlock(&tx_lock);
   return ret;
 }
 
@@ -152,22 +163,41 @@ static int enqueue_in(struct usbd_class_data* class_data, const uint8_t* data, s
   }
 
   net_buf_add_mem(buffer, data, len);
+  adb_usb.active_in_buffer = buffer;
   ret = usbd_ep_enqueue(class_data, buffer);
   if (ret != 0) {
+    adb_usb.active_in_buffer = NULL;
     net_buf_unref(buffer);
   }
   return ret;
 }
 
-static void reset_tx_queue(void) {
+static void reset_tx_queue_unlocked(void) {
   adb_usb.tx_phase = ADB_USB_TX_IDLE;
   adb_usb.tx_head = 0U;
   adb_usb.tx_tail = 0U;
   adb_usb.tx_count = 0U;
+  adb_usb.active_in_buffer = NULL;
   atomic_clear_bit(&adb_usb.state, ADB_USB_IN_ENGAGED);
 }
 
-static int start_tx_packet(struct usbd_class_data* class_data) {
+static void reset_tx_queue(void) {
+  k_mutex_lock(&tx_lock, K_FOREVER);
+  reset_tx_queue_unlocked();
+  k_mutex_unlock(&tx_lock);
+}
+
+static void reset_usb_queues(void) {
+  k_mutex_lock(&tx_lock, K_FOREVER);
+  reset_tx_queue_unlocked();
+  adb_usb.active_out_buffer = NULL;
+  atomic_clear_bit(&adb_usb.state, ADB_USB_OUT_ENGAGED);
+  k_mutex_unlock(&tx_lock);
+}
+
+void webos_adb_usb_reset_tx(void) { reset_tx_queue(); }
+
+static int start_tx_packet_unlocked(struct usbd_class_data* class_data) {
   struct adb_usb_tx_packet* packet;
   int ret;
 
@@ -189,9 +219,10 @@ int webos_adb_usb_send(const uint8_t* header, size_t header_len, const uint8_t* 
   struct usbd_class_data* class_data = adb_usb.class_data;
   struct adb_usb_tx_packet* packet;
   bool start_now;
-  int ret;
+  int ret = 0;
 
-  if (class_data == NULL || !atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED)) {
+  if (class_data == NULL || !atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED) ||
+      atomic_test_bit(&adb_usb.state, ADB_USB_RESETTING)) {
     return -ENODEV;
   }
   if (header == NULL || header_len != WEBOS_ADB_HEADER_SIZE || (payload == NULL && payload_len != 0U)) {
@@ -200,8 +231,15 @@ int webos_adb_usb_send(const uint8_t* header, size_t header_len, const uint8_t* 
   if (payload_len > CONFIG_WEBOS_ADB_USB_TRANSFER_SIZE) {
     return -EMSGSIZE;
   }
+
+  k_mutex_lock(&tx_lock, K_FOREVER);
+  if (!atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED) || atomic_test_bit(&adb_usb.state, ADB_USB_RESETTING)) {
+    ret = -ENODEV;
+    goto out;
+  }
   if (adb_usb.tx_count == ARRAY_SIZE(adb_usb.tx_queue)) {
-    return -ENOSPC;
+    ret = -ENOSPC;
+    goto out;
   }
 
   start_now = adb_usb.tx_count == 0U;
@@ -214,13 +252,15 @@ int webos_adb_usb_send(const uint8_t* header, size_t header_len, const uint8_t* 
   adb_usb.tx_tail = (adb_usb.tx_tail + 1U) % ARRAY_SIZE(adb_usb.tx_queue);
   ++adb_usb.tx_count;
 
-  if (!start_now) {
-    return 0;
+  if (start_now) {
+    ret = start_tx_packet_unlocked(class_data);
+    if (ret != 0) {
+      reset_tx_queue_unlocked();
+    }
   }
-  ret = start_tx_packet(class_data);
-  if (ret != 0) {
-    reset_tx_queue();
-  }
+
+out:
+  k_mutex_unlock(&tx_lock);
   return ret;
 }
 
@@ -229,26 +269,104 @@ static int adb_usb_request(struct usbd_class_data* class_data, struct net_buf* b
   uint8_t endpoint = info->ep;
   bool is_out = endpoint == bulk_out_endpoint();
   bool is_in = endpoint == bulk_in_endpoint();
+  bool notify_protocol = false;
+  bool reset_protocol = false;
   int ret = 0;
 
+  if (is_in) {
+    k_mutex_lock(&tx_lock, K_FOREVER);
+    if (buffer != adb_usb.active_in_buffer) {
+      k_mutex_unlock(&tx_lock);
+      net_buf_unref(buffer);
+      return 0;
+    }
+    adb_usb.active_in_buffer = NULL;
+    net_buf_unref(buffer);
+
+    if (err != 0) {
+      reset_tx_queue_unlocked();
+      reset_protocol = true;
+    } else if (adb_usb.tx_count != 0U) {
+      struct adb_usb_tx_packet* packet = &adb_usb.tx_queue[adb_usb.tx_head];
+
+      if (adb_usb.tx_phase == ADB_USB_TX_HEADER && packet->payload_len != 0U) {
+        adb_usb.tx_phase = ADB_USB_TX_PAYLOAD;
+        ret = enqueue_in(class_data, packet->payload, packet->payload_len);
+        if (ret != 0) {
+          LOG_ERR("Failed to send ADB USB payload: %d", ret);
+          reset_tx_queue_unlocked();
+          reset_protocol = true;
+        }
+      } else {
+        adb_usb.tx_head = (adb_usb.tx_head + 1U) % ARRAY_SIZE(adb_usb.tx_queue);
+        --adb_usb.tx_count;
+        adb_usb.tx_phase = ADB_USB_TX_IDLE;
+        atomic_clear_bit(&adb_usb.state, ADB_USB_IN_ENGAGED);
+        notify_protocol = true;
+        if (adb_usb.tx_count != 0U) {
+          ret = start_tx_packet_unlocked(class_data);
+          if (ret != 0) {
+            LOG_ERR("Failed to continue ADB USB TX queue: %d", ret);
+            reset_tx_queue_unlocked();
+            reset_protocol = true;
+            notify_protocol = false;
+          }
+        }
+      }
+    }
+    if (reset_protocol) {
+      atomic_set_bit(&adb_usb.state, ADB_USB_RESETTING);
+    }
+    k_mutex_unlock(&tx_lock);
+
+    if (reset_protocol) {
+      webos_adb_protocol_reset();
+      reset_usb_queues();
+      atomic_clear_bit(&adb_usb.state, ADB_USB_RESETTING);
+      if (atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED)) {
+        (void)submit_out(class_data);
+      }
+    } else if (notify_protocol) {
+      webos_adb_protocol_tx_ready();
+    }
+    if (err != 0 && err != -ECONNABORTED) {
+      LOG_WRN("ADB USB transfer failed ep=0x%02x: %d", endpoint, err);
+    }
+    if (err == -ECONNABORTED) {
+      return 0;
+    }
+    return err != 0 ? err : ret;
+  }
+
   if (is_out) {
+    k_mutex_lock(&tx_lock, K_FOREVER);
+    if (buffer != adb_usb.active_out_buffer) {
+      k_mutex_unlock(&tx_lock);
+      net_buf_unref(buffer);
+      return 0;
+    }
+    adb_usb.active_out_buffer = NULL;
     atomic_clear_bit(&adb_usb.state, ADB_USB_OUT_ENGAGED);
-    if (err == 0 && buffer->len != 0U) {
+    k_mutex_unlock(&tx_lock);
+
+    if (err == 0 && buffer->len != 0U && !atomic_test_bit(&adb_usb.state, ADB_USB_RESETTING)) {
       ret = webos_adb_protocol_receive(buffer->data, buffer->len);
-      if (ret != 0) {
+      if (ret == -ENOBUFS) {
+        LOG_WRN("ADB control queue overflow; resetting protocol transport");
+        atomic_set_bit(&adb_usb.state, ADB_USB_RESETTING);
+        webos_adb_protocol_reset();
+        reset_usb_queues();
+        atomic_clear_bit(&adb_usb.state, ADB_USB_RESETTING);
+        ret = 0;
+      } else if (ret != 0) {
         LOG_DBG("ADB packet rejected: %d", ret);
         ret = 0;
       }
     }
   }
-
   net_buf_unref(buffer);
 
   if (err != 0) {
-    if (is_in) {
-      reset_tx_queue();
-      webos_adb_protocol_reset();
-    }
     if (err == -ECONNABORTED) {
       return 0;
     }
@@ -256,37 +374,8 @@ static int adb_usb_request(struct usbd_class_data* class_data, struct net_buf* b
     return err;
   }
 
-  if (is_in && adb_usb.tx_count != 0U) {
-    struct adb_usb_tx_packet* packet = &adb_usb.tx_queue[adb_usb.tx_head];
-
-    if (adb_usb.tx_phase == ADB_USB_TX_HEADER && packet->payload_len != 0U) {
-      adb_usb.tx_phase = ADB_USB_TX_PAYLOAD;
-      ret = enqueue_in(class_data, packet->payload, packet->payload_len);
-      if (ret == 0) {
-        return 0;
-      }
-      LOG_ERR("Failed to send ADB USB payload: %d", ret);
-      reset_tx_queue();
-      webos_adb_protocol_reset();
-      return ret;
-    }
-
-    adb_usb.tx_head = (adb_usb.tx_head + 1U) % ARRAY_SIZE(adb_usb.tx_queue);
-    --adb_usb.tx_count;
-    adb_usb.tx_phase = ADB_USB_TX_IDLE;
-    atomic_clear_bit(&adb_usb.state, ADB_USB_IN_ENGAGED);
-    if (adb_usb.tx_count != 0U) {
-      ret = start_tx_packet(class_data);
-      if (ret != 0) {
-        LOG_ERR("Failed to continue ADB USB TX queue: %d", ret);
-        reset_tx_queue();
-        webos_adb_protocol_reset();
-        return ret;
-      }
-    }
-  }
-
-  if (is_out && atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED)) {
+  if (is_out && atomic_test_bit(&adb_usb.state, ADB_USB_ENABLED) &&
+      !atomic_test_bit(&adb_usb.state, ADB_USB_RESETTING)) {
     ret = submit_out(class_data);
     if (ret != 0) {
       LOG_ERR("Failed to queue ADB USB OUT request: %d", ret);
@@ -309,7 +398,7 @@ static int adb_usb_class_init(struct usbd_class_data* class_data) {
 static void adb_usb_enable(struct usbd_class_data* class_data) {
   int ret;
 
-  reset_tx_queue();
+  reset_usb_queues();
   webos_adb_protocol_reset();
   atomic_set_bit(&adb_usb.state, ADB_USB_ENABLED);
   ret = submit_out(class_data);
@@ -323,7 +412,7 @@ static void adb_usb_enable(struct usbd_class_data* class_data) {
 static void adb_usb_disable(struct usbd_class_data* class_data) {
   ARG_UNUSED(class_data);
   atomic_clear(&adb_usb.state);
-  reset_tx_queue();
+  reset_usb_queues();
   webos_adb_protocol_reset();
   LOG_INF("ADB USB interface disabled");
 }
@@ -386,8 +475,10 @@ static void adb_usb_message(struct usbd_context* context, const struct usbd_msg*
   ARG_UNUSED(context);
 
   if (message->type == USBD_MSG_RESET || message->type == USBD_MSG_VBUS_REMOVED) {
-    reset_tx_queue();
+    atomic_set_bit(&adb_usb.state, ADB_USB_RESETTING);
     webos_adb_protocol_reset();
+    reset_usb_queues();
+    atomic_clear_bit(&adb_usb.state, ADB_USB_RESETTING);
   }
 
   if (message->type == USBD_MSG_UDC_ERROR || message->type == USBD_MSG_STACK_ERROR) {

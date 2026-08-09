@@ -1,11 +1,10 @@
-#ifndef WEBOS_SERVICES_LOG_BUFFER_H
-#define WEBOS_SERVICES_LOG_BUFFER_H
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-#include <stddef.h>
+#ifndef WEBOS_SERVICES_LOG_BUFFER_H_
+#define WEBOS_SERVICES_LOG_BUFFER_H_
 
-void log_buffer_init(void);
-void log_buffer_put(const char* msg, size_t len);
-size_t log_buffer_read(char* dst, size_t dst_len);
-void log_buffer_clear(void);
+#include <webos/log_buffer.h>
 
-#endif
+#endif /* WEBOS_SERVICES_LOG_BUFFER_H_ */

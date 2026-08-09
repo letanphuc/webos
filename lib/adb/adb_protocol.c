@@ -36,6 +36,14 @@ struct adb_message {
   uint32_t magic;
 };
 
+struct adb_control_packet {
+  uint32_t command;
+  uint32_t arg0;
+  uint32_t arg1;
+  size_t payload_len;
+  uint8_t payload[CONFIG_WEBOS_ADB_CONTROL_PAYLOAD_SIZE];
+};
+
 struct webos_adb_stream {
   bool used;
   bool tx_pending;
@@ -43,6 +51,7 @@ struct webos_adb_stream {
   bool close_pending;
   uint32_t local_id;
   uint32_t remote_id;
+  uint32_t generation;
   const struct webos_adb_service_ops* ops;
   size_t tx_len;
   uint8_t tx_data[CONFIG_WEBOS_ADB_TX_PAYLOAD_SIZE];
@@ -61,14 +70,23 @@ BUILD_ASSERT(sizeof(struct adb_message) == WEBOS_ADB_HEADER_SIZE);
 
 static struct adb_rx_state rx;
 static struct webos_adb_stream streams[CONFIG_WEBOS_ADB_MAX_STREAMS];
+static struct adb_control_packet control_queue[CONFIG_WEBOS_ADB_CONTROL_QUEUE_DEPTH];
+static size_t control_head;
+static size_t control_tail;
+static size_t control_count;
 static webos_adb_send_fn transport_send;
 static uint32_t next_local_id = 1U;
+static uint32_t next_stream_generation = 1U;
 static size_t negotiated_payload = CONFIG_WEBOS_ADB_MAX_PAYLOAD;
 static bool online;
+static bool dispatching;
+static K_MUTEX_DEFINE(protocol_lock);
 
 static const char device_banner[] =
     "device::ro.product.name=webos;ro.product.model=WebOS_ESP32-S3;"
     "ro.product.device=webos_esp32s3;features=";
+
+BUILD_ASSERT(sizeof(device_banner) - 1U <= CONFIG_WEBOS_ADB_CONTROL_PAYLOAD_SIZE);
 
 static uint32_t adb_checksum(const uint8_t* data, size_t len) {
   uint32_t sum = 0;
@@ -94,7 +112,7 @@ static void encode_message(uint8_t output[WEBOS_ADB_HEADER_SIZE], uint32_t comma
   sys_put_le32(command ^ UINT32_MAX, output + 20);
 }
 
-static int send_packet(uint32_t command, uint32_t arg0, uint32_t arg1, const uint8_t* payload, size_t payload_len) {
+static int send_packet_raw(uint32_t command, uint32_t arg0, uint32_t arg1, const uint8_t* payload, size_t payload_len) {
   uint8_t header[WEBOS_ADB_HEADER_SIZE];
 
   if (transport_send == NULL) {
@@ -104,17 +122,69 @@ static int send_packet(uint32_t command, uint32_t arg0, uint32_t arg1, const uin
   return transport_send(header, sizeof(header), payload, payload_len);
 }
 
+static bool flow_control_error(int ret) { return ret == -ENOSPC || ret == -EBUSY; }
+
+static int enqueue_control(uint32_t command, uint32_t arg0, uint32_t arg1, const uint8_t* payload, size_t payload_len) {
+  struct adb_control_packet* packet;
+
+  if (payload_len > CONFIG_WEBOS_ADB_CONTROL_PAYLOAD_SIZE) {
+    return -EMSGSIZE;
+  }
+  if (control_count == ARRAY_SIZE(control_queue)) {
+    return -ENOBUFS;
+  }
+
+  packet = &control_queue[control_tail];
+  packet->command = command;
+  packet->arg0 = arg0;
+  packet->arg1 = arg1;
+  packet->payload_len = payload_len;
+  if (payload_len != 0U) {
+    memcpy(packet->payload, payload, payload_len);
+  }
+  control_tail = (control_tail + 1U) % ARRAY_SIZE(control_queue);
+  ++control_count;
+  return 0;
+}
+
+static int send_control(uint32_t command, uint32_t arg0, uint32_t arg1, const uint8_t* payload, size_t payload_len) {
+  int ret;
+
+  if (control_count != 0U) {
+    return enqueue_control(command, arg0, arg1, payload, payload_len);
+  }
+  ret = send_packet_raw(command, arg0, arg1, payload, payload_len);
+  if (flow_control_error(ret)) {
+    ret = enqueue_control(command, arg0, arg1, payload, payload_len);
+  }
+  return ret;
+}
+
+static int pump_controls(void) {
+  while (control_count != 0U) {
+    struct adb_control_packet* packet = &control_queue[control_head];
+    int ret = send_packet_raw(packet->command, packet->arg0, packet->arg1, packet->payload, packet->payload_len);
+
+    if (ret != 0) {
+      return ret;
+    }
+    control_head = (control_head + 1U) % ARRAY_SIZE(control_queue);
+    --control_count;
+  }
+  return 0;
+}
+
 static int send_connect(void) {
-  return send_packet(ADB_COMMAND_CNXN, ADB_VERSION, CONFIG_WEBOS_ADB_MAX_PAYLOAD, (const uint8_t*)device_banner,
-                     strlen(device_banner));
+  return send_control(ADB_COMMAND_CNXN, ADB_VERSION, CONFIG_WEBOS_ADB_MAX_PAYLOAD, (const uint8_t*)device_banner,
+                      strlen(device_banner));
 }
 
 static int send_ready(uint32_t local_id, uint32_t remote_id) {
-  return send_packet(ADB_COMMAND_OKAY, local_id, remote_id, NULL, 0U);
+  return send_control(ADB_COMMAND_OKAY, local_id, remote_id, NULL, 0U);
 }
 
 static int send_close(uint32_t local_id, uint32_t remote_id) {
-  return send_packet(ADB_COMMAND_CLSE, local_id, remote_id, NULL, 0U);
+  return send_control(ADB_COMMAND_CLSE, local_id, remote_id, NULL, 0U);
 }
 
 static uint32_t allocate_local_id(void) {
@@ -142,6 +212,10 @@ static struct webos_adb_stream* allocate_stream(uint32_t remote_id, const struct
       streams[i].used = true;
       streams[i].local_id = allocate_local_id();
       streams[i].remote_id = remote_id;
+      streams[i].generation = next_stream_generation++;
+      if (next_stream_generation == 0U) {
+        next_stream_generation = 1U;
+      }
       streams[i].ops = ops;
       return &streams[i];
     }
@@ -172,7 +246,10 @@ static int flush_stream(struct webos_adb_stream* stream) {
   int ret;
 
   if (stream->tx_pending && !stream->awaiting_ack) {
-    ret = send_packet(ADB_COMMAND_WRTE, stream->local_id, stream->remote_id, stream->tx_data, stream->tx_len);
+    if (control_count != 0U) {
+      return -ENOSPC;
+    }
+    ret = send_packet_raw(ADB_COMMAND_WRTE, stream->local_id, stream->remote_id, stream->tx_data, stream->tx_len);
     if (ret != 0) {
       return ret;
     }
@@ -190,34 +267,87 @@ static int flush_stream(struct webos_adb_stream* stream) {
   return 0;
 }
 
-int webos_adb_stream_write(struct webos_adb_stream* stream, const uint8_t* data, size_t len) {
-  if (stream == NULL || !stream->used || (data == NULL && len != 0U)) {
-    return -EINVAL;
-  }
-  if (len > webos_adb_stream_max_payload(stream)) {
-    return -EMSGSIZE;
-  }
-  if (stream->tx_pending || stream->awaiting_ack) {
-    return -EBUSY;
-  }
+static int stream_write_locked(struct webos_adb_stream* stream, uint32_t generation, const uint8_t* data, size_t len) {
+  int ret = 0;
 
-  if (len != 0U) {
-    memcpy(stream->tx_data, data, len);
+  if (stream == NULL || !stream->used || (generation != 0U && stream->generation != generation) ||
+      (data == NULL && len != 0U)) {
+    ret = -EINVAL;
+  } else if (len > webos_adb_stream_max_payload(stream)) {
+    ret = -EMSGSIZE;
+  } else if (stream->tx_pending || stream->awaiting_ack) {
+    ret = -EBUSY;
+  } else {
+    if (len != 0U) {
+      memcpy(stream->tx_data, data, len);
+    }
+    stream->tx_len = len;
+    stream->tx_pending = true;
+    if (!dispatching) {
+      ret = flush_stream(stream);
+      if (ret == -ENOSPC || ret == -EBUSY) {
+        ret = 0; /* The router owns the pending copy and retries when USB drains. */
+      } else if (ret != 0) {
+        stream->tx_pending = false;
+        stream->tx_len = 0U;
+      }
+    }
   }
-  stream->tx_len = len;
-  stream->tx_pending = true;
-  return 0;
+  return ret;
+}
+
+int webos_adb_stream_write(struct webos_adb_stream* stream, const uint8_t* data, size_t len) {
+  int ret;
+
+  k_mutex_lock(&protocol_lock, K_FOREVER);
+  ret = stream_write_locked(stream, 0U, data, len);
+  k_mutex_unlock(&protocol_lock);
+  return ret;
+}
+
+int webos_adb_stream_write_generation(struct webos_adb_stream* stream, uint32_t generation, const uint8_t* data,
+                                      size_t len) {
+  int ret;
+
+  k_mutex_lock(&protocol_lock, K_FOREVER);
+  ret = stream_write_locked(stream, generation, data, len);
+  k_mutex_unlock(&protocol_lock);
+  return ret;
+}
+
+uint32_t webos_adb_stream_generation(const struct webos_adb_stream* stream) {
+  return stream == NULL ? 0U : stream->generation;
+}
+
+static void stream_close_locked(struct webos_adb_stream* stream, uint32_t generation) {
+  if (stream != NULL && stream->used && (generation == 0U || stream->generation == generation)) {
+    stream->close_pending = true;
+    if (!dispatching) {
+      (void)flush_stream(stream);
+    }
+  }
 }
 
 void webos_adb_stream_close(struct webos_adb_stream* stream) {
-  if (stream != NULL && stream->used) {
-    stream->close_pending = true;
-  }
+  k_mutex_lock(&protocol_lock, K_FOREVER);
+  stream_close_locked(stream, 0U);
+  k_mutex_unlock(&protocol_lock);
+}
+
+void webos_adb_stream_close_generation(struct webos_adb_stream* stream, uint32_t generation) {
+  k_mutex_lock(&protocol_lock, K_FOREVER);
+  stream_close_locked(stream, generation);
+  k_mutex_unlock(&protocol_lock);
 }
 
 size_t webos_adb_stream_max_payload(const struct webos_adb_stream* stream) {
   ARG_UNUSED(stream);
-  return MIN(negotiated_payload, (size_t)CONFIG_WEBOS_ADB_TX_PAYLOAD_SIZE);
+  size_t capacity = MIN(negotiated_payload, (size_t)CONFIG_WEBOS_ADB_TX_PAYLOAD_SIZE);
+
+#if defined(CONFIG_WEBOS_ADB_USB)
+  capacity = MIN(capacity, (size_t)CONFIG_WEBOS_ADB_USB_TRANSFER_SIZE);
+#endif
+  return capacity;
 }
 
 static int validate_message(const struct adb_message* message) {
@@ -254,7 +384,9 @@ static int open_stream(const uint8_t* destination, size_t destination_len, uint3
   if (ret == 0) {
     ret = flush_stream(stream);
   }
-  if (ret != 0) {
+  if (flow_control_error(ret)) {
+    ret = 0;
+  } else if (ret != 0) {
     release_stream(stream);
   }
   return ret;
@@ -286,6 +418,13 @@ static int handle_open(void) {
       ret = webos_adb_reboot_request(NULL, 0U);
     }
     return ret;
+  }
+#endif
+
+#if defined(CONFIG_WEBOS_ADB_LOGCAT)
+  if (destination_len >= strlen("shell:") &&
+      webos_adb_logcat_matches(destination + strlen("shell:"), destination_len - strlen("shell:"))) {
+    return open_stream(destination, destination_len, rx.message.arg0, "shell:", &webos_adb_logcat_service_ops);
   }
 #endif
 
@@ -367,7 +506,15 @@ static int dispatch_message(void) {
 #if !defined(CONFIG_WEBOS_ADB_ALLOW_NO_AUTH)
       return -EACCES;
 #else
+      online = false;
       close_all_streams();
+      control_head = 0U;
+      control_tail = 0U;
+      control_count = 0U;
+      next_local_id = 1U;
+#if defined(CONFIG_WEBOS_ADB_USB)
+      webos_adb_usb_reset_tx();
+#endif
       negotiated_payload = MIN((size_t)rx.message.arg1, (size_t)CONFIG_WEBOS_ADB_MAX_PAYLOAD);
       ret = send_connect();
       if (ret == 0) {
@@ -411,15 +558,19 @@ void webos_adb_protocol_init(webos_adb_send_fn send_fn) {
   webos_adb_protocol_reset();
 }
 
-void webos_adb_protocol_reset(void) {
+static void protocol_reset_unlocked(void) {
   reset_rx();
   close_all_streams();
   next_local_id = 1U;
+  control_head = 0U;
+  control_tail = 0U;
+  control_count = 0U;
   negotiated_payload = CONFIG_WEBOS_ADB_MAX_PAYLOAD;
   online = false;
+  dispatching = false;
 }
 
-int webos_adb_protocol_receive(const uint8_t* data, size_t len) {
+static int protocol_receive_unlocked(const uint8_t* data, size_t len) {
   int ret = 0;
 
   if (data == NULL && len != 0U) {
@@ -469,5 +620,42 @@ int webos_adb_protocol_receive(const uint8_t* data, size_t len) {
       }
     }
   }
+  return ret;
+}
+
+void webos_adb_protocol_tx_ready(void) {
+  k_mutex_lock(&protocol_lock, K_FOREVER);
+  if (online && flow_control_error(pump_controls())) {
+    k_mutex_unlock(&protocol_lock);
+    return;
+  }
+  if (online && control_count == 0U) {
+    for (size_t i = 0; i < ARRAY_SIZE(streams); ++i) {
+      if (streams[i].used && (streams[i].tx_pending || streams[i].close_pending)) {
+        int ret = flush_stream(&streams[i]);
+
+        if (ret == -ENOSPC || ret == -EBUSY) {
+          break;
+        }
+      }
+    }
+  }
+  k_mutex_unlock(&protocol_lock);
+}
+
+void webos_adb_protocol_reset(void) {
+  k_mutex_lock(&protocol_lock, K_FOREVER);
+  protocol_reset_unlocked();
+  k_mutex_unlock(&protocol_lock);
+}
+
+int webos_adb_protocol_receive(const uint8_t* data, size_t len) {
+  int ret;
+
+  k_mutex_lock(&protocol_lock, K_FOREVER);
+  dispatching = true;
+  ret = protocol_receive_unlocked(data, len);
+  dispatching = false;
+  k_mutex_unlock(&protocol_lock);
   return ret;
 }

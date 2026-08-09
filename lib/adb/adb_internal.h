@@ -15,6 +15,7 @@ typedef int (*webos_adb_send_fn)(const uint8_t* header, size_t header_len, const
 void webos_adb_protocol_init(webos_adb_send_fn send_fn);
 void webos_adb_protocol_reset(void);
 int webos_adb_protocol_receive(const uint8_t* data, size_t len);
+void webos_adb_protocol_tx_ready(void);
 
 #if defined(CONFIG_WEBOS_ADB_REBOOT)
 int webos_adb_reboot_request(const char* target, size_t target_len);
@@ -22,6 +23,7 @@ int webos_adb_reboot_request(const char* target, size_t target_len);
 
 #if defined(CONFIG_WEBOS_ADB_USB)
 int webos_adb_usb_init(void);
+void webos_adb_usb_reset_tx(void);
 #endif
 
 #endif /* WEBOS_LIB_ADB_INTERNAL_H_ */
