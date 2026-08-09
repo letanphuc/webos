@@ -2,4 +2,5 @@
 
 add_subdirectory_ifdef(CONFIG_CUSTOM custom)
 add_subdirectory_ifdef(CONFIG_WEBOS_DEVFS devfs)
+add_subdirectory_ifdef(CONFIG_WEBOS_SHELL_EXEC shell_exec)
 add_subdirectory_ifdef(CONFIG_WEBOS_ADB adb)

@@ -3,13 +3,12 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <webos/shell_exec.h>
 #include <zephyr/app_version.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/http/server.h>
 #include <zephyr/net/http/service.h>
-#include <zephyr/shell/shell.h>
-#include <zephyr/shell/shell_dummy.h>
 #include <zephyr/sys/util.h>
 
 #include "services/fs/fs.h"
@@ -20,8 +19,6 @@
 #include "webos.h"
 
 LOG_MODULE_REGISTER(webos_http_handlers, LOG_LEVEL_DBG);
-
-static K_MUTEX_DEFINE(shell_lock);
 
 HTTP_SERVER_REGISTER_HEADER_CAPTURE(webos_path, "X-Webos-Path");
 
@@ -211,9 +208,9 @@ static int shell_handler(struct http_client_ctx* client, enum http_transaction_s
   static char input[256];
   static char response[CONFIG_SHELL_BACKEND_DUMMY_BUF_SIZE * 2 + 96];
   static char escaped[CONFIG_SHELL_BACKEND_DUMMY_BUF_SIZE * 2];
-  const struct shell* sh;
-  const char* output;
-  size_t output_len;
+  static char output[CONFIG_SHELL_BACKEND_DUMMY_BUF_SIZE];
+  size_t output_len = 0;
+  bool truncated;
   int ret;
 
   if (status == HTTP_SERVER_TRANSACTION_ABORTED || status == HTTP_SERVER_TRANSACTION_COMPLETE) {
@@ -238,31 +235,25 @@ static int shell_handler(struct http_client_ctx* client, enum http_transaction_s
   body[cursor] = '\0';
   cursor = 0;
 
-  k_mutex_lock(&shell_lock, K_FOREVER);
-  sh = shell_backend_dummy_get_ptr();
-
   if (json_has_key(body, "cmd")) {
     ret = json_get_string(body, "cmd", cmd, sizeof(cmd));
     if (ret == 0) {
-      shell_backend_dummy_clear_output(sh);
-      ret = shell_execute_cmd(sh, cmd);
+      ret = webos_shell_execute(cmd, output, sizeof(output), &output_len, &truncated);
     }
   } else if (json_has_key(body, "input")) {
     ret = json_get_string(body, "input", input, sizeof(input));
     if (ret == 0) {
-      ret = shell_backend_dummy_push_input(sh, input, strlen(input));
-      k_sleep(K_MSEC(20));
+      ret = webos_shell_push_input(input, strlen(input), output, sizeof(output), &output_len, &truncated);
     }
   } else {
-    shell_backend_dummy_clear_output(sh);
+    webos_shell_clear_output();
+    output[0] = '\0';
     ret = 0;
   }
 
-  output = shell_backend_dummy_get_output(sh, &output_len);
   append_json_string(escaped, sizeof(escaped), output, output_len);
   ret = snprintk(response, sizeof(response), "{\"rc\":%d,\"output\":\"%s\",\"attached\":%s}\n", ret, escaped,
                  json_has_key(body, "cmd") ? "false" : "true");
-  k_mutex_unlock(&shell_lock);
 
   set_json_response(response_ctx, HTTP_200_OK, response, ret);
   return 0;

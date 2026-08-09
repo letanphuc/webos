@@ -20,8 +20,8 @@ config WEBOS_ADB_ALLOW_NO_AUTH
 	default n
 	help
 	  Allow the host to enter the ADB device state without authenticating.
-	  This is only suitable for the initial USB enumeration milestone and
-	  must remain disabled in production firmware.
+	  This is suitable only for explicitly development firmware and must
+	  remain disabled in production builds.
 
 config WEBOS_ADB_MAX_PAYLOAD
 	int "Maximum negotiated ADB payload"
@@ -36,6 +36,14 @@ config WEBOS_ADB_USB_TRANSFER_SIZE
 	help
 	  Size of the reusable USB OUT request and the largest outbound payload
 	  supported by the initial enumeration implementation.
+
+config WEBOS_ADB_USB_TX_QUEUE_DEPTH
+	int "Queued ADB packets"
+	default 6
+	range 2 16
+	depends on WEBOS_ADB_USB
+	help
+	  Serialize control and stream packets while one USB IN transfer is active.
 
 config WEBOS_ADB_USB_VID
 	hex "USB vendor ID"
@@ -59,5 +67,81 @@ config WEBOS_ADB_USB_PRODUCT
 	string "USB product string"
 	default "WebOS ESP32-S3 ADB"
 	depends on WEBOS_ADB_USB
+
+config WEBOS_ADB_TX_PAYLOAD_SIZE
+	int "Maximum service TX payload"
+	default 512
+	range 64 WEBOS_ADB_MAX_PAYLOAD
+	help
+	  Size of each router-owned service output slot. Transports must accept
+	  packets at least this large.
+
+config WEBOS_ADB_MAX_STREAMS
+	int "Maximum simultaneous ADB streams"
+	default 2
+	range 1 8
+
+config WEBOS_ADB_SHELL
+	bool "Bounded non-interactive ADB shell service"
+	default n
+	depends on WEBOS_SHELL_EXEC
+	help
+	  Route allowlisted shell:<command> streams to Zephyr's dummy shell
+	  backend. Interactive input and shell_v2 are not supported.
+
+config WEBOS_ADB_SHELL_COMMAND_SIZE
+	int "Maximum ADB shell command size"
+	default 256
+	range 32 1024
+	depends on WEBOS_ADB_SHELL
+
+config WEBOS_ADB_SHELL_OUTPUT_SIZE
+	int "Maximum captured ADB shell output"
+	default 512
+	range 128 4096
+	depends on WEBOS_ADB_SHELL
+
+config WEBOS_ADB_SHELL_MAX_STREAMS
+	int "Maximum concurrent ADB shell streams"
+	default 1
+	range 1 4
+	depends on WEBOS_ADB_SHELL
+
+config WEBOS_ADB_SYNC
+	bool "Legacy ADB sync push service"
+	default n
+	help
+	  Enable bounded legacy SEND/DATA/DONE uploads below /STORAGE:.
+
+config WEBOS_ADB_SYNC_PATH_MAX
+	int "Maximum sync destination path"
+	default 128
+	range 64 512
+	depends on WEBOS_ADB_SYNC
+
+config WEBOS_ADB_SYNC_DATA_MAX
+	int "Maximum legacy sync DATA record"
+	default 65536
+	range 4096 65536
+	depends on WEBOS_ADB_SYNC
+	help
+	  This is a wire validation limit, not an allocation size. DATA records
+	  are streamed from bounded ADB payload slices directly to the file.
+
+config WEBOS_ADB_REBOOT
+	bool "ADB reboot service"
+	default n
+	select REBOOT
+	help
+	  Accept the standard reboot: ADB service and perform a cold reboot.
+	  Android-specific reboot targets are rejected.
+
+config WEBOS_ADB_REBOOT_DELAY_MS
+	int "Delay before an ADB-requested reboot"
+	default 250
+	range 50 5000
+	depends on WEBOS_ADB_REBOOT
+	help
+	  Give the ADB OKAY response time to reach the host before rebooting.
 
 endif

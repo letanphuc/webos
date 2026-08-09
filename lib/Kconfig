@@ -5,6 +5,7 @@ menu "Custom libraries"
 
 rsource "custom/Kconfig"
 rsource "devfs/Kconfig"
+rsource "shell_exec/Kconfig"
 rsource "adb/Kconfig"
 
 endmenu

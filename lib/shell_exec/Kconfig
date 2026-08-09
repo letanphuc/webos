@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config WEBOS_SHELL_EXEC
+	bool "Serialized shell command capture"
+	depends on SHELL && SHELL_BACKEND_DUMMY
+	help
+	  Provide one bounded, mutex-protected execution path for management
+	  transports which share Zephyr's dummy shell backend.
+
+config WEBOS_SHELL_EXEC_LOCK_TIMEOUT_MS
+	int "Shell backend lock timeout"
+	default 1000
+	range 1 60000
+	depends on WEBOS_SHELL_EXEC
