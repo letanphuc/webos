@@ -159,6 +159,7 @@ workspace. Zephyr, WAMR, MCUboot, their required modules, and WDB are fetched by
 
 ## Documentation
 
+- [Why WebOS?](docs/why-webos.md)
 - [Build and run](docs/build-and-run.md)
 - [WebOS ABI 1.0](doc/abi-v1.md)
 - [WDB design](doc/wdb.md)
