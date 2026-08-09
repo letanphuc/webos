@@ -3,6 +3,9 @@
 #include <zephyr/logging/log.h>
 
 #include "hal/wifi/wifi.h"
+#if defined(CONFIG_WEBOS_ADB)
+#include <webos/adb.h>
+#endif
 #include "services/fs/fs.h"
 #include "services/http/http.h"
 #include "services/http_client/http_client.h"
@@ -28,6 +31,13 @@ int main(void) {
   int ret;
 
   LOG_INF("WebOS starting on ESP32-S3");
+
+#if defined(CONFIG_WEBOS_ADB)
+  ret = webos_adb_init();
+  if (ret != 0) {
+    LOG_ERR("ADB initialization failed: %d", ret);
+  }
+#endif
 
   ota_init();
   health.filesystem = init_filesystem_layout();

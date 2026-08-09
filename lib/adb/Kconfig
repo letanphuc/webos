@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig WEBOS_ADB
+	bool "WebOS ADB-compatible device service"
+	help
+	  Enable the bounded ADB protocol engine. A transport is required before
+	  a host can connect.
+
+if WEBOS_ADB
+
+config WEBOS_ADB_USB
+	bool "ADB transport over USB"
+	default y
+	depends on USB_DEVICE_STACK_NEXT
+	help
+	  Expose an ADB vendor interface through Zephyr's USB device stack.
+
+config WEBOS_ADB_ALLOW_NO_AUTH
+	bool "Allow unauthenticated ADB (development only)"
+	default n
+	help
+	  Allow the host to enter the ADB device state without authenticating.
+	  This is only suitable for the initial USB enumeration milestone and
+	  must remain disabled in production firmware.
+
+config WEBOS_ADB_MAX_PAYLOAD
+	int "Maximum negotiated ADB payload"
+	default 4096
+	range 256 16384
+
+config WEBOS_ADB_USB_TRANSFER_SIZE
+	int "USB transfer buffer size"
+	default 512
+	range 64 4096
+	depends on WEBOS_ADB_USB
+	help
+	  Size of the reusable USB OUT request and the largest outbound payload
+	  supported by the initial enumeration implementation.
+
+config WEBOS_ADB_USB_VID
+	hex "USB vendor ID"
+	default 0x303a
+	depends on WEBOS_ADB_USB
+	help
+	  Development default for the ESP32-S3 prototype. Assign a project-owned
+	  VID before distributing hardware.
+
+config WEBOS_ADB_USB_PID
+	hex "USB product ID"
+	default 0x4002
+	depends on WEBOS_ADB_USB
+
+config WEBOS_ADB_USB_MANUFACTURER
+	string "USB manufacturer string"
+	default "WebOS"
+	depends on WEBOS_ADB_USB
+
+config WEBOS_ADB_USB_PRODUCT
+	string "USB product string"
+	default "WebOS ESP32-S3 ADB"
+	depends on WEBOS_ADB_USB
+
+endif
