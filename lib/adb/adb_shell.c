@@ -22,6 +22,17 @@ struct adb_shell_context {
   size_t output_offset;
   int command_rc;
   bool truncated;
+  bool interactive;
+  bool tx_in_flight;
+  bool saw_carriage_return;
+  bool close_requested;
+  bool discard_line;
+  uint8_t escape_state;
+  size_t command_len;
+  size_t input_len;
+  size_t input_capacity;
+  char command[CONFIG_WEBOS_ADB_SHELL_COMMAND_SIZE];
+  uint8_t* input;
   uint8_t output[CONFIG_WEBOS_ADB_SHELL_OUTPUT_SIZE];
 };
 
@@ -148,10 +159,30 @@ static struct adb_shell_context* allocate_context(struct webos_adb_stream* strea
 }
 
 static int queue_next_chunk(struct adb_shell_context* context) {
-  size_t remaining = context->output_len - context->output_offset;
-  size_t chunk_len = MIN(remaining, webos_adb_stream_max_payload(context->stream));
+  size_t remaining;
+  size_t chunk_len;
   int ret;
 
+  if (context->tx_in_flight) {
+    return 0;
+  }
+
+  if (context->interactive) {
+    if (context->output_len == 0U) {
+      return 0;
+    }
+    chunk_len = MIN(context->output_len, webos_adb_stream_max_payload(context->stream));
+    ret = webos_adb_stream_write(context->stream, context->output, chunk_len);
+    if (ret == 0) {
+      context->output_len -= chunk_len;
+      memmove(context->output, context->output + chunk_len, context->output_len);
+      context->tx_in_flight = true;
+    }
+    return ret;
+  }
+
+  remaining = context->output_len - context->output_offset;
+  chunk_len = MIN(remaining, webos_adb_stream_max_payload(context->stream));
   if (chunk_len == 0U) {
     LOG_DBG("ADB shell completed rc=%d truncated=%d", context->command_rc, context->truncated);
     webos_adb_stream_close(context->stream);
@@ -161,23 +192,27 @@ static int queue_next_chunk(struct adb_shell_context* context) {
   ret = webos_adb_stream_write(context->stream, context->output + context->output_offset, chunk_len);
   if (ret == 0) {
     context->output_offset += chunk_len;
+    context->tx_in_flight = true;
   }
   return ret;
 }
 
 static int adb_shell_open(struct webos_adb_stream* stream, const uint8_t* suffix, size_t suffix_len) {
+  static const char prompt[] = CONFIG_SHELL_PROMPT_DUMMY;
   struct adb_shell_context* context;
   char command[CONFIG_WEBOS_ADB_SHELL_COMMAND_SIZE];
   int ret;
 
-  if (suffix == NULL || suffix_len == 0U || suffix_len >= sizeof(command) || memchr(suffix, '\0', suffix_len) != NULL) {
+  if (suffix == NULL || suffix_len >= sizeof(command) || memchr(suffix, '\0', suffix_len) != NULL) {
     return -EINVAL;
   }
-  memcpy(command, suffix, suffix_len);
-  command[suffix_len] = '\0';
-  if (!command_allowed(command)) {
-    LOG_DBG("Rejected unsupported ADB shell command");
-    return -EACCES;
+  if (suffix_len != 0U) {
+    memcpy(command, suffix, suffix_len);
+    command[suffix_len] = '\0';
+    if (!command_allowed(command)) {
+      LOG_DBG("Rejected unsupported ADB shell command");
+      return -EACCES;
+    }
   }
 
   k_mutex_lock(&context_lock, K_FOREVER);
@@ -187,10 +222,27 @@ static int adb_shell_open(struct webos_adb_stream* stream, const uint8_t* suffix
     return -EBUSY;
   }
 
-  context->command_rc = webos_shell_execute(command, (char*)context->output, sizeof(context->output),
-                                            &context->output_len, &context->truncated);
+  if (suffix_len == 0U) {
+    context->input = k_malloc(CONFIG_WEBOS_ADB_SHELL_INPUT_SIZE);
+    if (context->input == NULL) {
+      k_mutex_lock(&context_lock, K_FOREVER);
+      memset(context, 0, sizeof(*context));
+      k_mutex_unlock(&context_lock);
+      return -ENOMEM;
+    }
+    context->input_capacity = CONFIG_WEBOS_ADB_SHELL_INPUT_SIZE;
+    context->interactive = true;
+    webos_shell_clear_output();
+    context->output_len = MIN(strlen(prompt), sizeof(context->output));
+    memcpy(context->output, prompt, context->output_len);
+  } else {
+    context->command_rc = webos_shell_execute(command, (char*)context->output, sizeof(context->output),
+                                              &context->output_len, &context->truncated);
+  }
+
   ret = queue_next_chunk(context);
   if (ret != 0) {
+    k_free(context->input);
     k_mutex_lock(&context_lock, K_FOREVER);
     memset(context, 0, sizeof(*context));
     k_mutex_unlock(&context_lock);
@@ -198,10 +250,171 @@ static int adb_shell_open(struct webos_adb_stream* stream, const uint8_t* suffix
   return ret;
 }
 
+static void append_output(struct adb_shell_context* context, const char* data, size_t len) {
+  size_t available = sizeof(context->output) - context->output_len;
+  size_t count = MIN(len, available);
+
+  if (count != 0U) {
+    memcpy(context->output + context->output_len, data, count);
+    context->output_len += count;
+  }
+  context->truncated |= count != len;
+}
+
+static int execute_interactive_line(struct adb_shell_context* context, bool add_prompt) {
+  static const char prompt[] = CONFIG_SHELL_PROMPT_DUMMY;
+  size_t captured = 0U;
+  size_t available;
+  bool truncated = false;
+
+  append_output(context, "\r\n", 2U);
+  context->command[context->command_len] = '\0';
+  if (strcmp(context->command, "exit") == 0) {
+    context->command_len = 0U;
+    context->close_requested = true;
+    webos_adb_stream_close(context->stream);
+    return 0;
+  }
+
+  if (context->command_len != 0U) {
+    size_t prompt_len = add_prompt ? strlen(prompt) : 0U;
+
+    available = sizeof(context->output) - context->output_len;
+    if (available <= prompt_len + 1U) {
+      context->truncated = true;
+    } else {
+      context->command_rc = webos_shell_execute(context->command, (char*)context->output + context->output_len,
+                                                available - prompt_len, &captured, &truncated);
+      context->output_len += captured;
+      context->truncated |= truncated;
+    }
+  }
+  context->command_len = 0U;
+  if (add_prompt) {
+    append_output(context, prompt, strlen(prompt));
+  }
+  return 0;
+}
+
+static int process_interactive_input(struct adb_shell_context* context) {
+  size_t consumed = 0U;
+  int ret = 0;
+
+  while (consumed < context->input_len) {
+    uint8_t value = context->input[consumed++];
+
+    if (context->escape_state == 1U) {
+      if (value == '[' || value == 'O') {
+        context->escape_state = 2U;
+        continue;
+      }
+      context->escape_state = 0U;
+    } else if (context->escape_state == 2U) {
+      if (value >= 0x40U && value <= 0x7eU) {
+        context->escape_state = 0U;
+      }
+      continue;
+    }
+    if (value == 0x1bU) {
+      context->escape_state = 1U;
+      continue;
+    }
+
+    if (value == '\n' && context->saw_carriage_return) {
+      context->saw_carriage_return = false;
+      continue;
+    }
+    context->saw_carriage_return = value == '\r';
+
+    if (context->discard_line) {
+      if (value == '\r' || value == '\n') {
+        context->discard_line = false;
+        append_output(context, "\r\n" CONFIG_SHELL_PROMPT_DUMMY, sizeof("\r\n" CONFIG_SHELL_PROMPT_DUMMY) - 1U);
+        break;
+      }
+      continue;
+    }
+
+    if (value == '\r' || value == '\n') {
+      ret = execute_interactive_line(context, true);
+      if (ret != 0 || context->close_requested || context->output_len != 0U) {
+        break;
+      }
+      continue;
+    }
+    if (value == 0x04U) {
+      if (context->command_len != 0U) {
+        ret = execute_interactive_line(context, false);
+      }
+      context->close_requested = true;
+      webos_adb_stream_close(context->stream);
+      break;
+    }
+    if (value == 0x03U) {
+      context->command_len = 0U;
+      append_output(context, "^C\r\n" CONFIG_SHELL_PROMPT_DUMMY, sizeof("^C\r\n" CONFIG_SHELL_PROMPT_DUMMY) - 1U);
+      break;
+    }
+    if (value == '\b' || value == 0x7fU) {
+      if (context->command_len != 0U) {
+        --context->command_len;
+        append_output(context, "\b \b", 3U);
+      }
+      continue;
+    }
+    if (value == '\t') {
+      append_output(context, "\a", 1U);
+      continue;
+    }
+    if (value < 0x20U || value > 0x7eU) {
+      continue;
+    }
+    if (context->command_len + 1U >= sizeof(context->command)) {
+      context->command_len = 0U;
+      context->discard_line = true;
+      append_output(context, "\r\nCommand too long", sizeof("\r\nCommand too long") - 1U);
+      break;
+    }
+    context->command[context->command_len++] = (char)value;
+    append_output(context, (const char*)&value, 1U);
+  }
+
+  context->input_len -= consumed;
+  if (context->input_len != 0U && consumed != 0U) {
+    memmove(context->input, context->input + consumed, context->input_len);
+  }
+  if (context->close_requested) {
+    context->input_len = 0U;
+  }
+  return ret;
+}
+
 static int adb_shell_write(struct webos_adb_stream* stream, const uint8_t* data, size_t len) {
-  ARG_UNUSED(stream);
-  ARG_UNUSED(data);
-  return len == 0U ? 0 : -ENOTSUP;
+  struct adb_shell_context* context = find_context(stream);
+  int ret;
+
+  if (context == NULL || (data == NULL && len != 0U)) {
+    return -EINVAL;
+  }
+  if (!context->interactive) {
+    return len == 0U ? 0 : -ENOTSUP;
+  }
+  if (len > context->input_capacity - context->input_len) {
+    return -ENOSPC;
+  }
+  if (len != 0U) {
+    memcpy(context->input + context->input_len, data, len);
+    context->input_len += len;
+  }
+
+  ret = 0;
+  if (!context->tx_in_flight && context->output_len == 0U) {
+    ret = process_interactive_input(context);
+  }
+  if (ret == 0) {
+    ret = queue_next_chunk(context);
+  }
+  return ret;
 }
 
 static void adb_shell_tx_ready(struct webos_adb_stream* stream) {
@@ -210,7 +423,18 @@ static void adb_shell_tx_ready(struct webos_adb_stream* stream) {
   k_mutex_lock(&context_lock, K_FOREVER);
   context = find_context(stream);
   k_mutex_unlock(&context_lock);
-  if (context != NULL && queue_next_chunk(context) != 0) {
+  if (context == NULL) {
+    return;
+  }
+
+  context->tx_in_flight = false;
+  if (context->interactive && context->output_len == 0U && context->input_len != 0U && !context->close_requested &&
+      process_interactive_input(context) != 0) {
+    LOG_WRN("Failed to process interactive ADB shell input");
+    webos_adb_stream_close(stream);
+    return;
+  }
+  if (queue_next_chunk(context) != 0) {
     LOG_WRN("Failed to continue ADB shell output");
     webos_adb_stream_close(stream);
   }
@@ -222,6 +446,10 @@ static void adb_shell_close(struct webos_adb_stream* stream) {
   k_mutex_lock(&context_lock, K_FOREVER);
   context = find_context(stream);
   if (context != NULL) {
+    if (context->interactive) {
+      webos_shell_clear_output();
+    }
+    k_free(context->input);
     memset(context, 0, sizeof(*context));
   }
   k_mutex_unlock(&context_lock);

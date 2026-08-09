@@ -82,12 +82,15 @@ config WEBOS_ADB_MAX_STREAMS
 	range 1 8
 
 config WEBOS_ADB_SHELL
-	bool "Bounded non-interactive ADB shell service"
+	bool "Bounded ADB shell service"
 	default n
 	depends on WEBOS_SHELL_EXEC
 	help
-	  Route allowlisted shell:<command> streams to Zephyr's dummy shell
-	  backend. Interactive input and shell_v2 are not supported.
+	  Route allowlisted shell:<command> streams and bounded legacy
+	  interactive shell: sessions to Zephyr's shared dummy shell backend.
+	  Interactive sessions can invoke any registered shell command, so they
+	  must not be exposed through an unauthenticated production build.
+	  shell_v2 is not advertised.
 
 config WEBOS_ADB_SHELL_COMMAND_SIZE
 	int "Maximum ADB shell command size"
@@ -100,6 +103,15 @@ config WEBOS_ADB_SHELL_OUTPUT_SIZE
 	default 512
 	range 128 4096
 	depends on WEBOS_ADB_SHELL
+
+config WEBOS_ADB_SHELL_INPUT_SIZE
+	int "Maximum buffered interactive shell input"
+	default 4096
+	range WEBOS_ADB_SHELL_COMMAND_SIZE 16384
+	depends on WEBOS_ADB_SHELL
+	help
+	  Bound input waiting behind shell output acknowledgements independently
+	  of the maximum length of one command line.
 
 config WEBOS_ADB_SHELL_MAX_STREAMS
 	int "Maximum concurrent ADB shell streams"
